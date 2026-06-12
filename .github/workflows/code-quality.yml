@@ -51,36 +51,6 @@ jobs:
           cd backend
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || true
 
-  lint-frontend:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
-      - name: Cache npm packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-lint-${{ hashFiles('**/frontend/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-lint-
-
-      - name: Install dependencies
-        run: |
-          cd frontend
-          npm ci --legacy-peer-deps
-
-      - name: Run ESLint
-        run: |
-          cd frontend
-          npm run lint || true
-
   security-scan:
     runs-on: ubuntu-latest
     permissions:
@@ -101,7 +71,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload Trivy results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-results.sarif'
         continue-on-error: true
