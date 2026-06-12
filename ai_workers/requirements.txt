@@ -1,0 +1,9 @@
+ultralytics==8.0.206
+mediapipe==0.10.8
+opencv-python==4.8.1.78
+numpy==1.26.2
+Pillow==10.1.0
+celery==5.3.4
+redis==5.0.1
+pydantic==2.5.0
+pydantic-settings==2.1.0

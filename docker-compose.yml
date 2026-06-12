@@ -1,0 +1,170 @@
+services:
+  # SQL Server Database
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: exam-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "${MSSQL_SA_PASSWORD:-YourStrong@Passw0rd}"
+      MSSQL_MEMORY_LIMIT_MB: 512
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    networks:
+      - exam-network
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "${MSSQL_SA_PASSWORD:-YourStrong@Passw0rd}", "-Q", "SELECT 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: exam-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - exam-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: exam-backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_SERVER: sqlserver
+      DATABASE_NAME: ExamSystem
+      DATABASE_USERNAME: sa
+      DATABASE_PASSWORD: "${MSSQL_SA_PASSWORD:-YourStrong@Passw0rd}"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      LIVEKIT_URL: http://livekit:7880
+      LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:-devkey}"
+      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:-secret}"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+    networks:
+      - exam-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Celery Worker (Grading)
+  celery-grading:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: exam-celery-grading
+    command: celery -A celery_app worker -Q grading --loglevel=info
+    environment:
+      DATABASE_SERVER: sqlserver
+      DATABASE_NAME: ExamSystem
+      DATABASE_USERNAME: sa
+      DATABASE_PASSWORD: "${MSSQL_SA_PASSWORD:-YourStrong@Passw0rd}"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./ai_workers:/app/ai_workers
+    networks:
+      - exam-network
+
+  # Celery Worker (Proctoring)
+  celery-proctoring:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: exam-celery-proctoring
+    command: celery -A celery_app worker -Q proctoring --loglevel=info
+    environment:
+      DATABASE_SERVER: sqlserver
+      DATABASE_NAME: ExamSystem
+      DATABASE_USERNAME: sa
+      DATABASE_PASSWORD: "${MSSQL_SA_PASSWORD:-YourStrong@Passw0rd}"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./ai_workers:/app/ai_workers
+    networks:
+      - exam-network
+
+  # LiveKit Server
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: exam-livekit
+    command: --dev
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882"
+    environment:
+      LIVEKIT_KEYS: "devkey: secret"
+    volumes:
+      - livekit_data:/livekit
+    networks:
+      - exam-network
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: exam-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - exam-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  sqlserver_data:
+  redis_data:
+  livekit_data:
+
+networks:
+  exam-network:
+    driver: bridge
