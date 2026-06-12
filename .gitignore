@@ -41,6 +41,9 @@ package-lock.json
 # Build files
 frontend/build/
 frontend/dist/
+frontend/.next/
+.next/
+.next
 
 # ==============================
 # OS / IDE
