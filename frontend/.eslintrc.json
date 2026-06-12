@@ -1,0 +1,11 @@
+{
+  "extends": "next/core-web-vitals",
+  "rules": {
+    "react-hooks/rules-of-hooks": "warn",
+    "@next/next/no-html-link-for-pages": "warn",
+    "react/display-name": "warn",
+    "@next/next/no-img-element": "warn",
+    "react/no-unescaped-entities": "warn"
+  },
+  "ignorePatterns": ["node_modules/", ".next/", "out/", "build/"]
+}
