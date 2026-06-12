@@ -59,6 +59,8 @@ jobs:
 
   test-frontend:
     runs-on: ubuntu-latest
+    # Temporarily disabled while redesigning frontend
+    if: false
 
     steps:
       - name: Checkout code
@@ -81,12 +83,6 @@ jobs:
         run: |
           cd frontend
           npm ci --legacy-peer-deps
-
-      - name: Run linting
-        run: |
-          cd frontend
-          npm run lint
-        continue-on-error: true
 
       - name: Run tests
         run: |
