@@ -6,8 +6,6 @@ pydantic[email]==2.5.0
 python-multipart==0.0.6
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-pyodbc==5.0.1
-pymssql==2.2.11
 sqlalchemy==2.0.23
 alembic==1.13.0
 redis==5.0.1
@@ -17,20 +15,10 @@ livekit-api==0.5.0
 python-dotenv==1.0.0
 httpx==0.25.2
 requests==2.31.0
-opencv-python==4.8.1.78
-mediapipe==0.10.8
-ultralytics==8.0.206
-numpy==1.26.2
-Pillow==10.1.0
-# Pre-built wheels for faster installation
-# torch==2.1.0  # Commented out for CI/CD - use lightweight version for testing
-# torchvision==0.16.0
 
 # Testing & Code Quality
 pytest==7.4.3
-pytest-cov==4.1.0
 pytest-asyncio==0.21.1
 black==23.12.0
 flake8==6.1.0
 isort==5.13.2
-safety==2.3.5
