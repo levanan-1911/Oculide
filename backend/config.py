@@ -7,13 +7,13 @@ import pyodbc
 # ============================================================
 class Settings(BaseSettings):
     # Database
-    DATABASE_DRIVER: str = "ODBC+Driver+17+for+SQL+Server"
-    DATABASE_SERVER: str = "localhost"
+    DATABASE_DRIVER: str = "ODBC+Driver+18+for+SQL+Server"
+    DATABASE_SERVER: str = "exam-sqlserver"
     DATABASE_NAME: str = "ExamSystem"
     DATABASE_USERNAME: str = ""
     DATABASE_PASSWORD: str = ""
     DATABASE_ENCRYPT: str = "yes"
-    DATABASE_TRUST_SERVER: str = "no"
+    DATABASE_TRUST_SERVER: str = "yes"
     DATABASE_CONNECTION_TIMEOUT: int = 30
     
     # JWT
@@ -33,12 +33,18 @@ class Settings(BaseSettings):
     LIVEKIT_API_SECRET: str = "secret"
     
     # CORS
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:3002,http://localhost:3001"
     
     # App
     APP_NAME: str = "Exam System API"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
+    
+    # OAuth
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GITHUB_CLIENT_ID: str = ""
+    GITHUB_CLIENT_SECRET: str = ""
     
     class Config:
         env_file = ".env"

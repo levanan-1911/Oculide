@@ -85,6 +85,16 @@ export default function Home() {
 
       {/* ── HERO ── */}
       <section style={{ paddingTop: 140, paddingBottom: 80, textAlign: 'center', padding: '140px 24px 80px', position: 'relative' }}>
+        {/* Floating Glowing Orbs */}
+        <div className="absolute animate-float" style={{
+          top: '15%', left: '20%', width: 120, height: 120, borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(99,102,241,0.2) 0%, transparent 70%)', filter: 'blur(20px)', pointerEvents: 'none'
+        }} />
+        <div className="absolute animate-float-delayed" style={{
+          bottom: '20%', right: '15%', width: 180, height: 180, borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(139,92,246,0.15) 0%, transparent 70%)', filter: 'blur(30px)', pointerEvents: 'none'
+        }} />
+        
         {/* Glow backdrop */}
         <div style={{
           position: 'absolute', top: '20%', left: '50%', transform: 'translateX(-50%)',
@@ -100,10 +110,10 @@ export default function Home() {
 
         <h1
           className="animate-fade-in-up animate-delay-100"
-          style={{ fontSize: 'clamp(2.4rem, 6vw, 4.5rem)', fontWeight: 900, lineHeight: 1.1, letterSpacing: '-0.04em', marginBottom: 20 }}
+          style={{ fontSize: 'clamp(2.8rem, 6vw, 5rem)', fontWeight: 900, lineHeight: 1.15, letterSpacing: '-0.04em', marginBottom: 24 }}
         >
-          Code with <span className="gradient-text">Clarity</span>,<br />
-          Test with <span className="gradient-text">Integrity</span>
+          Code with <span className="shimmer-text">Clarity</span>,<br />
+          Test with <span className="shimmer-text">Integrity</span>
         </h1>
 
         <p
@@ -128,14 +138,14 @@ export default function Home() {
         {/* Mini stats row */}
         <div
           className="animate-fade-in-up animate-delay-400"
-          style={{ display: 'flex', gap: 32, justifyContent: 'center', marginTop: 64, flexWrap: 'wrap' }}
+          style={{ display: 'flex', gap: 24, justifyContent: 'center', marginTop: 72, flexWrap: 'wrap', position: 'relative', zIndex: 10 }}
         >
-          {stats.map(s => (
-            <div key={s.label} style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 26, fontWeight: 800, background: 'linear-gradient(135deg,#6366f1,#06b6d4)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+          {stats.map((s, idx) => (
+            <div key={s.label} className={`glass-card ${idx % 2 === 0 ? 'animate-float' : 'animate-float-delayed'}`} style={{ padding: '20px 32px', textAlign: 'center', minWidth: 200 }}>
+              <div style={{ fontSize: 28, fontWeight: 900, background: 'linear-gradient(135deg,#a5b4fc,#67e8f9)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: 8 }}>
                 {s.value}
               </div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{s.label}</div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 500, letterSpacing: '0.02em' }}>{s.label}</div>
             </div>
           ))}
         </div>
@@ -157,20 +167,29 @@ export default function Home() {
           {features.map((f, i) => (
             <div
               key={f.label}
-              className={`glass-card animate-fade-in-up animate-delay-${(i + 1) * 100}`}
-              style={{ padding: '28px 24px' }}
+              className={`glass-card animate-fade-in-up animate-delay-${(i + 1) * 100} group relative overflow-hidden`}
+              style={{ padding: '32px 28px' }}
             >
-              <div style={{
-                width: 48, height: 48, borderRadius: 12, marginBottom: 18,
-                background: `rgba(${f.color === 'var(--brand-primary)' ? '99,102,241' : f.color === '#8b5cf6' ? '139,92,246' : f.color === 'var(--brand-accent)' ? '6,182,212' : '16,185,129'},0.15)`,
-                border: `1px solid rgba(${f.color === 'var(--brand-primary)' ? '99,102,241' : f.color === '#8b5cf6' ? '139,92,246' : f.color === 'var(--brand-accent)' ? '6,182,212' : '16,185,129'},0.3)`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: f.color,
-              }}>
-                {f.icon}
+              {/* Hover gradient background effect */}
+              <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500" style={{
+                background: `radial-gradient(circle at top right, ${f.glow}, transparent 70%)`
+              }} />
+              
+              <div className="relative z-10">
+                <div style={{
+                  width: 56, height: 56, borderRadius: 16, marginBottom: 24,
+                  background: `rgba(${f.color === 'var(--brand-primary)' ? '99,102,241' : f.color === '#8b5cf6' ? '139,92,246' : f.color === 'var(--brand-accent)' ? '6,182,212' : '16,185,129'},0.15)`,
+                  border: `1px solid rgba(${f.color === 'var(--brand-primary)' ? '99,102,241' : f.color === '#8b5cf6' ? '139,92,246' : f.color === 'var(--brand-accent)' ? '6,182,212' : '16,185,129'},0.3)`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: f.color,
+                  boxShadow: `0 8px 32px ${f.glow}`,
+                  transition: 'transform 0.3s cubic-bezier(0.4,0,0.2,1)',
+                }} className="group-hover:scale-110 group-hover:-translate-y-1">
+                  {f.icon}
+                </div>
+                <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 12, color: 'var(--text-primary)' }}>{f.label}</h3>
+                <p style={{ fontSize: 14.5, color: 'var(--text-secondary)', lineHeight: 1.7 }}>{f.desc}</p>
               </div>
-              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: 'var(--text-primary)' }}>{f.label}</h3>
-              <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.65 }}>{f.desc}</p>
             </div>
           ))}
         </div>

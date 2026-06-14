@@ -1,0 +1,48 @@
+name: Notify on Workflow Status
+
+on:
+  workflow_run:
+    workflows: ["Build and Push Docker Images", "Run Tests", "Code Quality & Security"]
+    types: [completed]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Slack notification on failure
+        if: github.event.workflow_run.conclusion == 'failure'
+        uses: slackapi/slack-github-action@v1
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK }}
+          payload: |
+            {
+              "text": "❌ Oculide CI/CD Pipeline Failed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*❌ CI/CD Pipeline Failed*\n*Workflow:* ${{ github.event.workflow_run.name }}\n*Branch:* ${{ github.event.workflow_run.head_branch }}\n*Commit:* <${{ github.event.workflow_run.html_url }}|View Details>"
+                  }
+                }
+              ]
+            }
+
+      - name: Send Slack notification on success
+        if: github.event.workflow_run.conclusion == 'success'
+        uses: slackapi/slack-github-action@v1
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK }}
+          payload: |
+            {
+              "text": "✅ Oculide CI/CD Pipeline Passed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*✅ CI/CD Pipeline Passed*\n*Workflow:* ${{ github.event.workflow_run.name }}\n*Branch:* ${{ github.event.workflow_run.head_branch }}\n*Commit:* <${{ github.event.workflow_run.html_url }}|View Details>"
+                  }
+                }
+              ]
+            }

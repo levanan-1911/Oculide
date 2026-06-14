@@ -40,8 +40,14 @@ export default api
 
 // API functions
 export const authAPI = {
-  login: (username: string, password: string) =>
-    api.post('/api/auth/login', { username, password }),
+  login: (username: string, password: string) => {
+    const formData = new URLSearchParams()
+    formData.append('username', username)
+    formData.append('password', password)
+    return api.post('/api/auth/login', formData, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  },
   
   register: (data: {
     username: string
@@ -51,8 +57,14 @@ export const authAPI = {
     role: string
     student_id?: string
   }) => api.post('/api/auth/register', data),
-  
   getMe: () => api.get('/api/auth/me'),
+  
+  join: (data: {
+    full_name: string
+    student_id: string
+    room_code: string
+    passcode?: string
+  }) => api.post('/api/auth/join', data),
 }
 
 export const roomsAPI = {
@@ -70,6 +82,8 @@ export const roomsAPI = {
     api.get(`/api/rooms/?skip=${skip}&limit=${limit}`),
   
   getById: (room_id: number) => api.get(`/api/rooms/${room_id}`),
+  
+  getDashboard: (room_id: number) => api.get(`/api/rooms/${room_id}/dashboard`),
   
   update: (room_id: number, data: any) =>
     api.put(`/api/rooms/${room_id}`, data),
@@ -182,6 +196,9 @@ export const livekitAPI = {
 }
 
 export const violationsAPI = {
+  analyzeSnapshot: (data: { session_id: number; image_data: string }) =>
+    api.post('/api/violations/analyze', data),
+    
   create: (data: {
     session_id: number
     student_id: number

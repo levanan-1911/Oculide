@@ -22,15 +22,17 @@ def enroll_student(room_id: int, student_id: int, enrolled_by: int) -> Dict:
     try:
         cursor.execute("""
             INSERT INTO StudentEnrollments (room_id, student_id, enrolled_by)
+            OUTPUT INSERTED.enrollment_id
             VALUES (?, ?, ?)
         """, (room_id, student_id, enrolled_by))
+        
+        enrollment_id = cursor.fetchone()[0]
         conn.commit()
         
-        # Get the enrollment
         cursor.execute("""
             SELECT enrollment_id, room_id, student_id, enrolled_at, enrolled_by
-            FROM StudentEnrollments WHERE enrollment_id = SCOPE_IDENTITY()
-        """)
+            FROM StudentEnrollments WHERE enrollment_id = ?
+        """, (enrollment_id,))
         row = cursor.fetchone()
         columns = [column[0] for column in cursor.description]
         return dict(zip(columns, row))

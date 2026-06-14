@@ -2,6 +2,7 @@ import './globals.css'
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import { Toaster } from 'react-hot-toast'
+import TubesCursorWrapper from '@/components/TubesCursorWrapper'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 
@@ -18,6 +19,7 @@ export default function RootLayout({
   return (
     <html lang="vi">
       <body className={inter.className}>
+        <TubesCursorWrapper />
         <div className="bg-mesh" />
         {children}
         <Toaster

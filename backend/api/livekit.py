@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel
 from typing import Optional, List
+import traceback
 
 from config import settings
 from services.livekit_service import livekit_service
@@ -125,12 +126,14 @@ async def generate_token(
 ):
     """Generate access token for a room"""
     try:
-        # Check if room exists
+        # Check if room exists, auto-create if not
         room = livekit_service.get_room(token_request.room_name)
         if not room:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Room not found"
+            # Auto-create the room for backward compatibility with old DB rooms
+            print(f"Auto-creating LiveKit room: {token_request.room_name}")
+            livekit_service.create_room(
+                room_name=token_request.room_name,
+                empty_timeout=7200  # Default 2 hours
             )
         
         # Generate token based on user role
@@ -168,7 +171,10 @@ async def generate_token(
     except HTTPException:
         raise
     except Exception as e:
+        error_msg = str(e)
+        print(f"FAILED TO GENERATE TOKEN. Error: {error_msg}")
+        traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate token: {str(e)}"
+            detail=f"Failed to generate token: {error_msg}"
         )

@@ -83,6 +83,20 @@ async def create_submission_endpoint(
             code_content=submission_data.code_content,
             language=submission_data.language
         )
+        
+        # Trigger Celery Background Task for Grading
+        from celery_app import celery_app
+        celery_app.send_task(
+            'tasks.grading_tasks.grade_submission',
+            args=[
+                submission["submission_id"],
+                submission_data.question_id,
+                submission_data.code_content,
+                submission_data.language
+            ],
+            queue='grading'
+        )
+        
         return SubmissionResponse(**submission)
     except Exception as e:
         raise HTTPException(

@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────────────────
+# Dockerfile.celery  –  Celery AI Proctoring Workers
+# ─────────────────────────────────────────────────────────
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# ── System libraries required by OpenCV, MediaPipe, & SQL Server ──────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl apt-transport-https gnupg2 \
+    gcc g++ libgl1 libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 libopenblas-dev \
+    && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    && curl -fsSL https://packages.microsoft.com/config/debian/12/prod.list | tee /etc/apt/sources.list.d/mssql-release.list \
+    && sed -i 's,\[,\[signed-by=/usr/share/keyrings/microsoft-prod.gpg ,g' /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 unixodbc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python dependencies ───────────────────────────────────
+# Install core API deps first (shared with backend)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install ML deps (separate file — pinned torch 2.5.x)
+COPY requirements-ml.txt .
+RUN pip install --no-cache-dir -r requirements-ml.txt
+
+# ── Application code ──────────────────────────────────────
+COPY . .
+
+# Pre-download YOLOv8n weights so startup is instant
+RUN python -c "\
+from ultralytics import YOLO; \
+model = YOLO('yolov8n.pt'); \
+print('YOLOv8n weights ready')" || echo "YOLO pre-download skipped"
+
+# ── Default command (overridden per service in docker-compose) ─
+CMD ["celery", "-A", "celery_app", "worker", "--loglevel=info"]

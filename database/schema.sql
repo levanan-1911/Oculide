@@ -191,7 +191,7 @@ CREATE TABLE GradingResults (
     CONSTRAINT fk_grading_submission FOREIGN KEY (submission_id) 
         REFERENCES StudentSubmissions(submission_id) ON DELETE CASCADE,
     CONSTRAINT fk_grading_testcase FOREIGN KEY (test_case_id) 
-        REFERENCES TestCases(test_case_id) ON DELETE CASCADE
+        REFERENCES TestCases(test_case_id) ON DELETE NO ACTION
 );
 GO
 
@@ -408,7 +408,7 @@ BEGIN
     LEFT JOIN GradingResults gr ON ss.submission_id = gr.submission_id
     LEFT JOIN TestCases tc ON gr.test_case_id = tc.test_case_id
     WHERE eq.room_id = @room_id
-    GROUP BY eq.question_id, eq.question_title, eq.max_points, ss.submission_id, ss.submitted_at, ss.status
+    GROUP BY eq.question_id, eq.question_title, eq.max_points, eq.question_order, ss.submission_id, ss.submitted_at, ss.status
     ORDER BY eq.question_order;
 END;
 GO

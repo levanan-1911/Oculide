@@ -53,6 +53,8 @@ class AIProctoringWorker:
         detections = []
         
         for result in results:
+            if not result.boxes:
+                continue
             for box in result.boxes:
                 class_id = int(box.cls[0])
                 class_name = self.yolo_model.names[class_id]
@@ -165,11 +167,23 @@ class AIProctoringWorker:
             
             # Detect objects (phones, suspicious items)
             object_detections = self.detect_objects(image)
+            
+            # Count persons detected by YOLO
+            person_count = sum(1 for d in object_detections if d['class'] == 'person')
+            if person_count > 1:
+                violations.append(ViolationDetection(
+                    has_violation=True,
+                    violation_type='multiple_people',
+                    severity='high',
+                    confidence=0.9,
+                    description=f"Detected {person_count} people in frame (YOLO)"
+                ))
+
             for detection in object_detections:
-                if detection['class'] in ['cell phone', 'person', 'book']:
+                if detection['class'] in ['cell phone', 'book']:
                     violations.append(ViolationDetection(
                         has_violation=True,
-                        violation_type='suspicious_object' if detection['class'] == 'cell phone' else 'multiple_faces',
+                        violation_type='suspicious_object',
                         severity='high',
                         confidence=detection['confidence'],
                         description=f"Detected {detection['class']} with confidence {detection['confidence']:.2f}"

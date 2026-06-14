@@ -138,11 +138,15 @@ class LiveKitService:
             
             token = AccessToken(
                 api_key=settings.LIVEKIT_API_KEY,
-                api_secret=settings.LIVEKIT_API_SECRET,
-                identity=participant_identity,
-                name=participant_name,
-                grants=grants,
-                ttl=timedelta(minutes=expires_in_minutes)
+                api_secret=settings.LIVEKIT_API_SECRET
+            ).with_identity(
+                participant_identity
+            ).with_name(
+                participant_name
+            ).with_grants(
+                grants
+            ).with_ttl(
+                timedelta(minutes=expires_in_minutes)
             )
             
             return token.to_jwt()
@@ -221,20 +225,22 @@ class LiveKitService:
         """Generate an admin token for API authentication"""
         try:
             grants = VideoGrants(
-                room_join=True,
-                can_publish=True,
-                can_subscribe=True,
-                can_publish_data=True,
+                room_create=True,
+                room_list=True,
                 room_admin=True
             )
             
             token = AccessToken(
                 api_key=self.api_key,
-                api_secret=self.api_secret,
-                identity="admin",
-                name="Admin",
-                grants=grants,
-                ttl=timedelta(hours=24)
+                api_secret=self.api_secret
+            ).with_identity(
+                "admin"
+            ).with_name(
+                "Admin"
+            ).with_grants(
+                grants
+            ).with_ttl(
+                timedelta(hours=24)
             )
             
             return token.to_jwt()

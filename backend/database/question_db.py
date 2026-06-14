@@ -58,22 +58,16 @@ def create_question(
             INSERT INTO ExamQuestions (room_id, question_order, question_title, question_description,
                                       question_type, programming_language, max_points, 
                                       time_limit_minutes, memory_limit_mb)
+            OUTPUT INSERTED.question_id
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (room_id, question_order, question_title, question_description,
               question_type, programming_language, max_points,
               time_limit_minutes, memory_limit_mb))
+        
+        question_id = cursor.fetchone()[0]
         conn.commit()
         
-        # Get the created question
-        cursor.execute("""
-            SELECT question_id, room_id, question_order, question_title, question_description,
-                   question_type, programming_language, max_points, time_limit_minutes,
-                   memory_limit_mb, is_active, created_at, updated_at
-            FROM ExamQuestions WHERE question_id = SCOPE_IDENTITY()
-        """)
-        row = cursor.fetchone()
-        columns = [column[0] for column in cursor.description]
-        return dict(zip(columns, row))
+        return get_question_by_id(question_id)
     finally:
         cursor.close()
         conn.close()
@@ -111,7 +105,23 @@ def delete_question(question_id: int) -> bool:
     conn = get_sqlserver_connection()
     cursor = conn.cursor()
     try:
+        # 1. Xóa GradingResults liên kết với bài nộp của câu hỏi này
+        cursor.execute("""
+            DELETE FROM GradingResults 
+            WHERE submission_id IN (
+                SELECT submission_id FROM StudentSubmissions WHERE question_id = ?
+            )
+        """, (question_id,))
+        
+        # 2. Xóa bài nộp
+        cursor.execute("DELETE FROM StudentSubmissions WHERE question_id = ?", (question_id,))
+        
+        # 3. Xóa TestCases (Test cases có thể đã tự cascade nhưng xóa cho chắc)
+        cursor.execute("DELETE FROM TestCases WHERE question_id = ?", (question_id,))
+        
+        # 4. Xóa câu hỏi
         cursor.execute("DELETE FROM ExamQuestions WHERE question_id = ?", (question_id,))
+        
         conn.commit()
         return cursor.rowcount > 0
     finally:
@@ -157,15 +167,17 @@ def create_test_case(
     try:
         cursor.execute("""
             INSERT INTO TestCases (question_id, input_data, expected_output, is_hidden, points)
+            OUTPUT INSERTED.test_case_id
             VALUES (?, ?, ?, ?, ?)
         """, (question_id, input_data, expected_output, is_hidden, points))
+        
+        test_case_id = cursor.fetchone()[0]
         conn.commit()
         
-        # Get the created test case
         cursor.execute("""
             SELECT test_case_id, question_id, input_data, expected_output, is_hidden, points, created_at
-            FROM TestCases WHERE test_case_id = SCOPE_IDENTITY()
-        """)
+            FROM TestCases WHERE test_case_id = ?
+        """, (test_case_id,))
         row = cursor.fetchone()
         columns = [column[0] for column in cursor.description]
         return dict(zip(columns, row))

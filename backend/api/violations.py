@@ -45,7 +45,7 @@ async def create_violation_endpoint(
     valid_types = [
         'tab_switch', 'copy_paste', 'no_face_detected',
         'multiple_faces', 'phone_detected', 'suspicious_object',
-        'fullscreen_exit', 'camera_blocked', 'time_exceeded'
+        'fullscreen_exit', 'camera_blocked', 'time_exceeded', 'inactive_30s', 'multiple_people'
     ]
     if violation_data.violation_type not in valid_types:
         raise HTTPException(
@@ -77,12 +77,60 @@ async def create_violation_endpoint(
             description=violation_data.description,
             snapshot_url=snapshot_url
         )
+        
+        # Publish WebSocket update to Proctor via Redis
+        try:
+            from database.session_db import get_session_by_id
+            import redis
+            import json
+            
+            session = get_session_by_id(violation_data.session_id)
+            if session:
+                r = redis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=settings.REDIS_DB)
+                msg = {
+                    "type": "proctoring_violation",
+                    "room_id": session["room_id"],
+                    "student_id": violation_data.student_id,
+                    "violations": [
+                        {
+                            "type": violation_data.violation_type, 
+                            "severity": violation_data.severity, 
+                            "description": violation_data.description
+                        }
+                    ]
+                }
+                r.publish("ws_updates", json.dumps(msg))
+        except Exception as ws_e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to publish WS update: {ws_e}")
+            
         return ViolationResponse(**violation)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error creating violation: {str(e)}"
         )
+
+class SnapshotAnalysisRequest(BaseModel):
+    session_id: int
+    image_data: str  # Base64 string
+
+@router.post("/analyze", status_code=status.HTTP_202_ACCEPTED)
+async def analyze_snapshot_endpoint(
+    request: SnapshotAnalysisRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Send webcam snapshot to Celery AI Worker for proctoring analysis"""
+    from celery_app import celery_app  # Initialize Celery app context
+    from tasks.ai_proctoring_tasks import analyze_snapshot
+    
+    # Send task to Celery asynchronously via 'proctoring' queue
+    analyze_snapshot.apply_async(
+        args=[request.image_data, request.session_id, current_user["user_id"]],
+        queue='proctoring'
+    )
+    
+    return {"status": "accepted", "message": "Snapshot sent for AI analysis"}
 
 @router.get("/session/{session_id}", response_model=List[ViolationResponse])
 async def get_session_violations(

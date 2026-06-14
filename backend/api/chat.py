@@ -38,6 +38,26 @@ async def send_message(
             recipient_id=message_data.recipient_id,
             message=message_data.message
         )
+        
+        # Notify WebSocket of new chat message via Redis
+        try:
+            import redis
+            import json
+            from config import settings
+            r = redis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=settings.REDIS_DB)
+            msg = {
+                "type": "chat_message",
+                "room_id": message_data.room_id,
+                "sender_id": current_user["user_id"],
+                "recipient_id": message_data.recipient_id,
+                "message": message_data.message,
+                "message_id": message["message_id"]
+            }
+            r.publish("ws_updates", json.dumps(msg))
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to publish chat WS update: {e}")
+            
         return MessageResponse(**message)
     except Exception as e:
         raise HTTPException(

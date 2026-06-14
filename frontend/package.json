@@ -13,34 +13,30 @@
     "health-check": "wget --quiet --tries=1 --spider http://localhost:3000 || exit 1"
   },
   "dependencies": {
+    "@livekit/components-react": "^2.9.21",
+    "@monaco-editor/react": "^4.7.0",
+    "axios": "^1.6.2",
+    "livekit-client": "^2.1.0",
     "next": "^14.0.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "@monaco-editor/react": "^4.6.0",
-    "livekit-client": "^2.1.0",
-    "axios": "^1.6.2",
-    "zustand": "^4.4.7",
-    "react-hook-form": "^7.48.2",
     "react-hot-toast": "^2.4.1",
-    "lucide-react": "^0.294.0",
-    "clsx": "^2.0.0",
-    "tailwind-merge": "^2.1.0",
-    "date-fns": "^2.30.0"
+    "zustand": "^4.4.7"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.1.5",
+    "@testing-library/react": "^14.1.2",
+    "@testing-library/user-event": "^14.5.1",
     "@types/node": "^20.10.5",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
     "autoprefixer": "^10.4.16",
     "eslint": "^8.56.0",
     "eslint-config-next": "^14.0.4",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",
-    "typescript": "^5.3.3",
-    "@testing-library/react": "^14.1.2",
-    "@testing-library/jest-dom": "^6.1.5",
-    "@testing-library/user-event": "^14.5.1",
-    "jest": "^29.7.0",
-    "jest-environment-jsdom": "^29.7.0"
+    "typescript": "^5.3.3"
   }
 }

@@ -23,6 +23,7 @@ class RoomCreate(BaseModel):
     end_time: datetime
     duration_minutes: int = Field(..., gt=0)
     max_attempts: int = Field(default=1, gt=0)
+    passcode: Optional[str] = None
 
 class RoomUpdate(BaseModel):
     room_name: Optional[str] = None
@@ -84,7 +85,8 @@ async def create_exam_room(
             start_time=room_data.start_time,
             end_time=room_data.end_time,
             duration_minutes=room_data.duration_minutes,
-            max_attempts=room_data.max_attempts
+            max_attempts=room_data.max_attempts,
+            passcode=room_data.passcode
         )
         
         # Create LiveKit room for video streaming
@@ -127,6 +129,44 @@ async def get_rooms(
         rooms = []
     
     return [RoomResponse(**room) for room in rooms]
+
+@router.get("/{room_id}/dashboard")
+async def get_room_dashboard(
+    room_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    room = get_room_by_id(room_id)
+    if not room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Room not found"
+        )
+    
+    # Check permissions (only instructor or admin)
+    if current_user["role"] not in ["instructor", "admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only instructors and admins can view dashboard"
+        )
+        
+    if current_user["role"] == "instructor" and room["instructor_id"] != current_user["user_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only view dashboard for your own rooms"
+        )
+        
+    from database.room_db import get_room_dashboard_data
+    from websocket.connection_manager import manager
+    
+    dashboard_data = get_room_dashboard_data(room_id)
+    connected_users = manager.get_connected_users(room_id)
+    
+    for student in dashboard_data:
+        # If DB says active but they are not connected to WebSocket, they are offline
+        if student["status"] == "active" and student["id"] not in connected_users:
+            student["status"] = "offline"
+            
+    return dashboard_data
 
 @router.get("/{room_id}", response_model=RoomResponse)
 async def get_room(

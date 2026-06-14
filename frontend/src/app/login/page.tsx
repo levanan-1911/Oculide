@@ -2,17 +2,47 @@
 
 import Link from 'next/link'
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { authAPI } from '@/utils/api'
+import { useAuthStore } from '@/store/useStore'
 
 export default function LoginPage() {
+  const router = useRouter()
+  const setAuth = useAuthStore((state) => state.setAuth)
+  
   const [role, setRole] = useState<'student' | 'instructor'>('student')
   const [loading, setLoading] = useState(false)
   const [showPass, setShowPass] = useState(false)
+  const [error, setError] = useState('')
+  
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
-    await new Promise(r => setTimeout(r, 1500))
-    setLoading(false)
+    setError('')
+    
+    try {
+      // Backend uses OAuth2 password form (username & password)
+      const response = await authAPI.login(username, password)
+      const { user, access_token } = response.data
+      
+      // Save to global state and localStorage
+      setAuth(user, access_token)
+      
+      // Redirect based on user role
+      if (user.role === 'instructor' || user.role === 'admin') {
+        router.push('/instructor')
+      } else {
+        router.push('/exam')
+      }
+    } catch (err: any) {
+      console.error(err)
+      setError(err.response?.data?.detail || 'Sai tài khoản hoặc mật khẩu')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -74,81 +104,115 @@ export default function LoginPage() {
 
         {/* Card */}
         <div className="glass-card" style={{ padding: '32px 28px' }}>
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-            {/* Email */}
-            <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                Email
-              </label>
-              <input
-                type="email"
-                className="input-field"
-                placeholder="ten@truong.edu.vn"
-                required
-              />
+          {error && (
+            <div style={{ padding: '10px 12px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: 8, color: '#ef4444', fontSize: 13, marginBottom: 16 }}>
+              {error}
             </div>
-
-            {/* Password */}
-            <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                Mật khẩu
-              </label>
-              <div style={{ position: 'relative' }}>
+          )}
+          {role === 'instructor' ? (
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              {/* Username/Email */}
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                  Tài khoản (Email / MSSV)
+                </label>
                 <input
-                  type={showPass ? 'text' : 'password'}
+                  type="text"
                   className="input-field"
-                  placeholder="••••••••"
+                  placeholder="Nhập tên đăng nhập"
+                  value={username}
+                  onChange={e => setUsername(e.target.value)}
                   required
-                  style={{ paddingRight: 44 }}
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPass(!showPass)}
-                  style={{
-                    position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-                    background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4,
-                  }}
-                >
-                  {showPass ? (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
-                      <line x1="1" y1="1" x2="23" y2="23" />
-                    </svg>
-                  ) : (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  )}
-                </button>
               </div>
-            </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <a href="#" style={{ fontSize: 12, color: 'var(--brand-primary)', textDecoration: 'none' }}>
-                Quên mật khẩu?
-              </a>
-            </div>
+              {/* Password */}
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                  Mật khẩu
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type={showPass ? 'text' : 'password'}
+                    className="input-field"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    required
+                    style={{ paddingRight: 44 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPass(!showPass)}
+                    style={{
+                      position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+                      background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4,
+                    }}
+                  >
+                    {showPass ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                      </svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
 
-            {/* Submit */}
-            <button
-              type="submit"
-              className="btn-primary"
-              disabled={loading}
-              style={{ width: '100%', justifyContent: 'center', padding: '12px', fontSize: 14, marginTop: 4 }}
-            >
-              {loading ? (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: 'spin 1s linear infinite' }}>
-                  <path d="M21 12a9 9 0 11-6.219-8.56" />
-                </svg>
-              ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
-                </svg>
-              )}
-              {loading ? 'Đang đăng nhập...' : 'Đăng nhập'}
-            </button>
-          </form>
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <a href="#" style={{ fontSize: 12, color: 'var(--brand-primary)', textDecoration: 'none' }}>
+                  Quên mật khẩu?
+                </a>
+              </div>
+
+              {/* Submit */}
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={loading}
+                style={{ width: '100%', justifyContent: 'center', padding: '12px', fontSize: 14, marginTop: 4 }}
+              >
+                {loading ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: 'spin 1s linear infinite' }}>
+                    <path d="M21 12a9 9 0 11-6.219-8.56" />
+                  </svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                  </svg>
+                )}
+                {loading ? 'Đang đăng nhập...' : 'Đăng nhập'}
+              </button>
+            </form>
+          ) : (
+            <div style={{ textAlign: 'center', padding: '10px 0' }}>
+              <div style={{ 
+                width: 64, height: 64, borderRadius: '50%', background: 'rgba(99,102,241,0.1)', 
+                display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' 
+              }}>
+                <span style={{ fontSize: 28 }}>👋</span>
+              </div>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>
+                Sinh viên không cần tài khoản!
+              </h3>
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 24 }}>
+                Hệ thống thi Oculide cho phép sinh viên vào phòng thi ngay lập tức chỉ bằng Mã Phòng (Room Code) do Giảng viên cung cấp.
+              </p>
+              <Link href="/join" style={{ textDecoration: 'none' }}>
+                <button className="btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '12px', fontSize: 14 }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Đến trang Nhập Mã Phòng
+                </button>
+              </Link>
+            </div>
+          )}
         </div>
 
         {/* Register link */}

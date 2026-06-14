@@ -42,6 +42,7 @@ class QuestionUpdate(BaseModel):
     time_limit_minutes: Optional[int] = None
     memory_limit_mb: Optional[int] = None
     is_active: Optional[bool] = None
+    test_cases: Optional[List[TestCaseCreate]] = None
 
 class QuestionResponse(BaseModel):
     question_id: int
@@ -219,8 +220,38 @@ async def update_exam_question(
             )
     
     try:
-        update_data = {k: v for k, v in question_data.dict().items() if v is not None}
+        update_data = {k: v for k, v in question_data.dict(exclude={'test_cases'}).items() if v is not None}
         updated_question = update_question(question_id, **update_data)
+        
+        # If test cases are provided, replace them all
+        if question_data.test_cases is not None:
+            # Delete old test cases
+            from config import get_sqlserver_connection
+            conn = get_sqlserver_connection()
+            cursor = conn.cursor()
+            
+            # Xóa GradingResults liên kết với các test cases cũ để tránh lỗi FK
+            cursor.execute("""
+                DELETE FROM GradingResults 
+                WHERE test_case_id IN (
+                    SELECT test_case_id FROM TestCases WHERE question_id = ?
+                )
+            """, (question_id,))
+            
+            cursor.execute("DELETE FROM TestCases WHERE question_id = ?", (question_id,))
+            conn.commit()
+            conn.close()
+            
+            # Insert new test cases
+            for tc in question_data.test_cases:
+                create_test_case(
+                    question_id=question_id,
+                    input_data=tc.input_data,
+                    expected_output=tc.expected_output,
+                    is_hidden=tc.is_hidden,
+                    points=tc.points
+                )
+                
         return QuestionResponse(**updated_question)
     except Exception as e:
         raise HTTPException(

@@ -15,19 +15,18 @@ def create_violation(
     try:
         cursor.execute("""
             INSERT INTO ViolationLogs (session_id, student_id, violation_type, severity, description, snapshot_url)
+            OUTPUT inserted.violation_id, inserted.session_id, inserted.student_id, inserted.violation_type, 
+                   inserted.severity, inserted.description, inserted.snapshot_url, inserted.detected_at, 
+                   inserted.is_reviewed, inserted.reviewed_by, inserted.reviewed_at
             VALUES (?, ?, ?, ?, ?, ?)
         """, (session_id, student_id, violation_type, severity, description, snapshot_url))
+        row = cursor.fetchone()
         conn.commit()
         
-        # Get the created violation
-        cursor.execute("""
-            SELECT violation_id, session_id, student_id, violation_type, severity,
-                   description, snapshot_url, detected_at, is_reviewed, reviewed_by, reviewed_at
-            FROM ViolationLogs WHERE violation_id = SCOPE_IDENTITY()
-        """)
-        row = cursor.fetchone()
-        columns = [column[0] for column in cursor.description]
-        return dict(zip(columns, row))
+        if row:
+            columns = [column[0] for column in cursor.description]
+            return dict(zip(columns, row))
+        return None
     finally:
         cursor.close()
         conn.close()

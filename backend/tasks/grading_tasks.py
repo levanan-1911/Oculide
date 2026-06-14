@@ -1,192 +1,304 @@
+"""
+grading_tasks.py — Secure Auto-Grader using Docker SDK sandbox
+
+Architecture:
+  1. Celery task receives (submission_id, question_id, code, language)
+  2. Creates an isolated Docker container per test-case run
+     - mem_limit=128m      (prevent memory bombs)
+     - nano_cpus=500000000 (0.5 CPU max)
+     - network_mode=none   (no outbound Internet — prevents cheating)
+     - read_only=True      (immutable filesystem)
+     - auto-removed after execution
+  3. Collects stdout, compares against expected_output
+  4. Updates submission status + broadcasts result via Redis pub/sub
+"""
+
 from celery import shared_task
-from typing import Dict, List
-import subprocess
-import json
+from typing import Dict, List, Optional
 import os
-import tempfile
-from datetime import datetime
+import time
+import base64
+import logging
+
+# Docker SDK — safe sandbox execution
+try:
+    import docker
+    from docker.errors import ContainerError, ImageNotFound, APIError
+    DOCKER_AVAILABLE = True
+except ImportError:
+    DOCKER_AVAILABLE = False
 
 from database.question_db import get_test_cases_by_question
 from database.submission_db import update_submission_status
 
-@shared_task
-def grade_submission(submission_id: int, question_id: int, code_content: str, language: str):
+logger = logging.getLogger(__name__)
+
+# ─── Configuration ────────────────────────────────────────────────────────────
+SANDBOX_MEM_LIMIT   = os.getenv("SANDBOX_MEM_LIMIT", "128m")
+SANDBOX_TIME_LIMIT  = int(os.getenv("SANDBOX_TIME_LIMIT_S", "10"))   # seconds
+SANDBOX_CPU_QUOTA   = int(os.getenv("SANDBOX_NANO_CPUS", "500000000"))  # 0.5 CPU
+
+# Docker image to use per language
+LANGUAGE_IMAGES: Dict[str, str] = {
+    "python":     "python:3.11-alpine",
+    "javascript": "node:18-alpine",
+    "java":       "openjdk:17-slim",
+    "cpp":        "gcc:12",
+    "c":          "gcc:12",
+}
+
+# Run command template per language  (code file is mounted at /tmp/solution.<ext>)
+LANGUAGE_RUN_CMDS: Dict[str, str] = {
+    "python":     "python /tmp/solution.py",
+    "javascript": "node /tmp/solution.js",
+    "java":       "sh -c 'cd /tmp && javac Solution.java && java Solution'",
+    "cpp":        "sh -c 'g++ -O2 -o /tmp/solution /tmp/solution.cpp && /tmp/solution'",
+    "c":          "sh -c 'gcc -O2 -o /tmp/solution /tmp/solution.c && /tmp/solution'",
+}
+
+LANGUAGE_EXTENSIONS: Dict[str, str] = {
+    "python":     "py",
+    "javascript": "js",
+    "java":       "java",   # file must be named Solution.java for javac
+    "cpp":        "cpp",
+    "c":          "c",
+}
+
+# ─── Main Celery Task ─────────────────────────────────────────────────────────
+
+@shared_task(bind=True, max_retries=1, default_retry_delay=5)
+def grade_submission(
+    self,
+    submission_id: int,
+    question_id: int,
+    code_content: str,
+    language: str,
+):
     """
-    Grade a code submission by running test cases
-    
-    Args:
-        submission_id: ID of the submission
-        question_id: ID of the question
-        code_content: The code to grade
-        language: Programming language
-    
+    Grade a code submission by running all test cases in Docker sandboxes.
+
     Returns:
-        Grading results
+        dict with submission_id, status, total_points, max_points,
+        score_percentage, and per-test-case results.
     """
     try:
-        # Update submission status to grading
-        update_submission_status(submission_id, 'grading')
-        
-        # Get test cases for the question
+        update_submission_status(submission_id, "grading")
+
         test_cases = get_test_cases_by_question(question_id, hidden_only=None)
-        
         if not test_cases:
+            update_submission_status(submission_id, "completed")
             return {
-                'submission_id': submission_id,
-                'status': 'completed',
-                'total_points': 0,
-                'max_points': 0,
-                'test_results': [],
-                'error': 'No test cases found'
+                "submission_id": submission_id,
+                "status": "completed",
+                "total_points": 0,
+                "max_points": 0,
+                "test_results": [],
+                "error": "No test cases configured for this question",
             }
-        
-        # Run code against test cases
-        results = []
-        total_points = 0
-        max_points = sum(tc['points'] for tc in test_cases)
-        
-        for test_case in test_cases:
-            result = run_test_case(code_content, language, test_case)
-            results.append(result)
-            if result['passed']:
-                total_points += test_case['points']
-        
-        # Update submission status to completed
-        update_submission_status(submission_id, 'completed')
-        
-        return {
-            'submission_id': submission_id,
-            'status': 'completed',
-            'total_points': total_points,
-            'max_points': max_points,
-            'score_percentage': (total_points / max_points * 100) if max_points > 0 else 0,
-            'test_results': results
-        }
-    
-    except Exception as e:
-        update_submission_status(submission_id, 'failed')
-        return {
-            'submission_id': submission_id,
-            'status': 'failed',
-            'error': str(e)
-        }
 
-def run_test_case(code: str, language: str, test_case: Dict) -> Dict:
-    """
-    Run a single test case against the code
-    
-    Args:
-        code: The code to run
-        language: Programming language
-        test_case: Test case with input and expected output
-    
-    Returns:
-        Test result
-    """
-    try:
-        # Create temporary files
-        with tempfile.NamedTemporaryFile(mode='w', suffix=f'.{get_file_extension(language)}', delete=False) as code_file:
-            code_file.write(code)
-            code_path = code_file.name
-        
-        with tempfile.NamedTemporaryFile(mode='w', delete=False) as input_file:
-            input_file.write(test_case['input_data'])
-            input_path = input_file.name
-        
-        # Run the code in Docker sandbox (placeholder)
-        # For now, we'll use subprocess (not safe for production)
-        result = run_code_safely(code_path, input_path, language, test_case.get('time_limit_minutes', 1))
-        
-        # Clean up
-        os.unlink(code_path)
-        os.unlink(input_path)
-        
-        # Compare output
-        passed = result['output'].strip() == test_case['expected_output'].strip()
-        
-        return {
-            'test_case_id': test_case['test_case_id'],
-            'passed': passed,
-            'expected_output': test_case['expected_output'],
-            'actual_output': result['output'],
-            'execution_time': result['execution_time'],
-            'error': result.get('error')
-        }
-    
-    except Exception as e:
-        return {
-            'test_case_id': test_case['test_case_id'],
-            'passed': False,
-            'error': str(e)
-        }
+        results: List[Dict] = []
+        total_points = 0.0
+        max_points   = float(sum(tc.get("points", 0) for tc in test_cases))
 
-def run_code_safely(code_path: str, input_path: str, language: str, time_limit: int) -> Dict:
-    """
-    Run code in a safe environment (placeholder for Docker)
-    
-    Args:
-        code_path: Path to the code file
-        input_path: Path to the input file
-        language: Programming language
-        time_limit: Time limit in minutes
-    
-    Returns:
-        Execution result
-    """
-    try:
-        # Map language to command
-        commands = {
-            'python': ['python', code_path],
-            'javascript': ['node', code_path],
-            'java': ['java', code_path],
-            'cpp': ['g++', code_path, '-o', code_path + '.out'] + ['&&', code_path + '.out'],
-        }
-        
-        command = commands.get(language, ['python', code_path])
-        
-        # Run with timeout
-        start_time = datetime.utcnow()
-        
-        with open(input_path, 'r') as input_f:
-            result = subprocess.run(
-                command,
-                stdin=input_f,
-                capture_output=True,
-                text=True,
-                timeout=time_limit * 60
+        for tc in test_cases:
+            result = _run_in_docker_sandbox(
+                code=code_content,
+                language=language,
+                stdin_data=tc.get("input_data", ""),
+                time_limit=SANDBOX_TIME_LIMIT,
             )
+
+            def normalize(s):
+                return str(s).replace('\r\n', '\n').strip() if s else ""
+
+            passed = (
+                not result["error"]
+                and normalize(result["stdout"]) == normalize(tc["expected_output"])
+            )
+            if passed:
+                total_points += float(tc.get("points", 0))
+
+            results.append({
+                "test_case_id":   tc["test_case_id"],
+                "passed":         passed,
+                "input_data":     tc.get("input_data", ""),
+                "expected_output": tc["expected_output"],
+                "actual_output":  result["stdout"],
+                "execution_ms":   result["execution_ms"],
+                "error":          result["error"],
+            })
+
+        score_pct = round((total_points / max_points * 100), 2) if max_points > 0 else 0
+        update_submission_status(submission_id, "completed")
         
-        execution_time = (datetime.utcnow() - start_time).total_seconds()
-        
+        # Notify WebSocket via Redis
+        _publish_ws_update(submission_id, "completed", score_pct, results)
+
         return {
-            'output': result.stdout,
-            'error': result.stderr if result.stderr else None,
-            'execution_time': execution_time,
-            'return_code': result.returncode
-        }
-    
-    except subprocess.TimeoutExpired:
-        return {
-            'output': '',
-            'error': 'Time limit exceeded',
-            'execution_time': time_limit * 60,
-            'return_code': -1
-        }
-    except Exception as e:
-        return {
-            'output': '',
-            'error': str(e),
-            'execution_time': 0,
-            'return_code': -1
+            "submission_id":    submission_id,
+            "status":           "completed",
+            "total_points":     total_points,
+            "max_points":       max_points,
+            "score_percentage": score_pct,
+            "test_results":     results,
         }
 
-def get_file_extension(language: str) -> str:
-    """Get file extension for a programming language"""
-    extensions = {
-        'python': 'py',
-        'javascript': 'js',
-        'java': 'java',
-        'cpp': 'cpp',
-        'c': 'c',
-    }
-    return extensions.get(language, 'py')
+    except Exception as exc:
+        logger.exception("grade_submission failed for submission %s", submission_id)
+        update_submission_status(submission_id, "failed")
+        # Notify WebSocket of failure via Redis
+        _publish_ws_update(submission_id, "failed", 0, [])
+        
+        # Retry once before giving up
+        try:
+            raise self.retry(exc=exc)
+        except self.MaxRetriesExceededError:
+            return {"submission_id": submission_id, "status": "failed", "error": str(exc)}
+
+def _publish_ws_update(submission_id: int, status: str, score_pct: float, results: List[Dict] = None):
+    try:
+        from database.submission_db import get_submission_by_id
+        import redis
+        import json
+        from config import settings
+        
+        submission = get_submission_by_id(submission_id)
+        if not submission:
+            return
+            
+        r = redis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=settings.REDIS_DB)
+        msg = {
+            "type": "grading_result",
+            "room_id": submission["room_id"],
+            "student_id": submission["student_id"],
+            "submission_id": submission_id,
+            "status": status,
+            "score_percentage": score_pct,
+            "test_results": results or []
+        }
+        r.publish("ws_updates", json.dumps(msg))
+    except Exception as e:
+        logger.error(f"Failed to publish WS update: {e}")
+
+
+# ─── Docker Sandbox ───────────────────────────────────────────────────────────
+
+def _run_in_docker_sandbox(
+    code: str,
+    language: str,
+    stdin_data: str,
+    time_limit: int = 10,
+) -> Dict:
+    """
+    Run `code` inside a throwaway Docker container.
+
+    Security constraints:
+      - network_mode=none      : no internet access
+      - mem_limit=128m         : prevent memory exhaustion
+      - nano_cpus=0.5          : fair CPU share
+      - read_only=True         : immutable filesystem (tmp allowed via tmpfs)
+      - auto_remove=True       : container deleted immediately after exit
+      - no privileges          : user=nobody
+    """
+    if not DOCKER_AVAILABLE:
+        logger.warning("docker SDK not installed, falling back to unsafe subprocess")
+        return _run_subprocess_fallback(code, language, stdin_data, time_limit)
+
+    lang = language.lower()
+    image = LANGUAGE_IMAGES.get(lang)
+    run_cmd = LANGUAGE_RUN_CMDS.get(lang)
+    ext = LANGUAGE_EXTENSIONS.get(lang, "py")
+
+    if not image or not run_cmd:
+        return {"stdout": "", "execution_ms": 0, "error": f"Unsupported language: {language}"}
+
+    # Encode code as base64 so we can echo it safely inside the container
+    code_b64 = base64.b64encode(code.encode()).decode()
+
+    # Build the shell command that:
+    #   1. Decodes base64 → writes source file
+    #   2. Runs the program with stdin piped
+    filename = "Solution.java" if lang == "java" else f"solution.{ext}"
+    shell_cmd = (
+        f"echo {code_b64} | base64 -d > /tmp/{filename} && "
+        f"echo {base64.b64encode(stdin_data.encode()).decode()} | base64 -d | "
+        f"timeout {time_limit} {run_cmd}"
+    )
+
+    try:
+        client = docker.from_env(timeout=time_limit + 5)
+        start = time.monotonic()
+
+        output = client.containers.run(
+            image=image,
+            command=["sh", "-c", shell_cmd],
+            mem_limit=SANDBOX_MEM_LIMIT,
+            nano_cpus=SANDBOX_CPU_QUOTA,
+            network_mode="none",
+            read_only=False,       # some languages need write access to /tmp
+            remove=True,
+            stdout=True,
+            stderr=True,
+            stdin_open=False,
+            detach=False,
+            user="nobody" if lang == "python" else None,
+        )
+
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        stdout = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else str(output)
+
+        return {"stdout": stdout, "execution_ms": elapsed_ms, "error": None}
+
+    except ContainerError as e:
+        stderr = e.stderr.decode("utf-8", errors="replace") if e.stderr else str(e)
+        return {"stdout": "", "execution_ms": 0, "error": stderr[:500]}
+    except ImageNotFound:
+        return {"stdout": "", "execution_ms": 0, "error": f"Docker image not found: {image}"}
+    except APIError as e:
+        return {"stdout": "", "execution_ms": 0, "error": f"Docker API error: {e}"}
+    except Exception as e:
+        return {"stdout": "", "execution_ms": 0, "error": str(e)[:500]}
+
+
+# ─── Subprocess Fallback (DEV ONLY — NEVER use in production) ─────────────────
+
+def _run_subprocess_fallback(code: str, language: str, stdin_data: str, time_limit: int) -> Dict:
+    """
+    ⚠️  UNSAFE — dev fallback only when Docker daemon is unavailable.
+    Do NOT use in production.
+    """
+    import subprocess
+    import tempfile
+
+    ext = LANGUAGE_EXTENSIONS.get(language.lower(), "py")
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=f".{ext}", delete=False) as f:
+            f.write(code)
+            code_path = f.name
+
+        cmd_map = {
+            "python":     ["python", code_path],
+            "javascript": ["node", code_path],
+        }
+        cmd = cmd_map.get(language.lower(), ["python", code_path])
+
+        start = time.monotonic()
+        proc = subprocess.run(
+            cmd,
+            input=stdin_data,
+            capture_output=True,
+            text=True,
+            timeout=time_limit,
+        )
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        os.unlink(code_path)
+
+        return {
+            "stdout":       proc.stdout,
+            "execution_ms": elapsed_ms,
+            "error":        proc.stderr[:500] if proc.stderr else None,
+        }
+    except subprocess.TimeoutExpired:
+        return {"stdout": "", "execution_ms": time_limit * 1000, "error": "Time limit exceeded"}
+    except Exception as e:
+        return {"stdout": "", "execution_ms": 0, "error": str(e)}

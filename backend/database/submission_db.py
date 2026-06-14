@@ -78,16 +78,18 @@ def create_submission(
     try:
         cursor.execute("""
             INSERT INTO StudentSubmissions (room_id, student_id, question_id, attempt_number, code_content, language)
+            OUTPUT INSERTED.submission_id
             VALUES (?, ?, ?, ?, ?, ?)
         """, (room_id, student_id, question_id, attempt_number, code_content, language))
+        
+        submission_id = cursor.fetchone()[0]
         conn.commit()
         
-        # Get the created submission
         cursor.execute("""
             SELECT submission_id, room_id, student_id, question_id, attempt_number,
                    code_content, language, submitted_at, status
-            FROM StudentSubmissions WHERE submission_id = SCOPE_IDENTITY()
-        """)
+            FROM StudentSubmissions WHERE submission_id = ?
+        """, (submission_id,))
         row = cursor.fetchone()
         columns = [column[0] for column in cursor.description]
         return dict(zip(columns, row))
