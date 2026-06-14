@@ -14,7 +14,7 @@ function StudentVideo({ studentId, source = Track.Source.Camera }: { studentId: 
   const tracks = useTracks([{ source, withPlaceholder: false }])
   const track = tracks.find(t => t.participant.identity === `student_${studentId}`)
   
-  if (!track) return (
+  if (!track || !track.publication) return (
     <div style={{
       width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: `linear-gradient(135deg, rgba(15,15,42,0.8) 0%, rgba(0,0,0,1) 100%)`,
@@ -25,7 +25,7 @@ function StudentVideo({ studentId, source = Track.Source.Camera }: { studentId: 
     </div>
   )
   
-  return <VideoTrack trackRef={track} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+  return <VideoTrack trackRef={track as any} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
 }
 
 const statusConfig: Record<string, { label: string; color: string; bg: string }> = {

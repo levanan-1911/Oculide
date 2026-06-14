@@ -102,7 +102,7 @@ export default function JoinRoomPage() {
               {/* Massive Room Code Input */}
               <div style={{ textAlign: 'center' }}>
                 <label style={{ display: 'block', fontSize: 11, fontWeight: 800, color: '#67e8f9', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.2em' }}>
-                  // Mã phòng thi (Room Code)
+                  {'// Mã phòng thi (Room Code)'}
                 </label>
                 <input 
                   ref={inputRef}

@@ -71,6 +71,7 @@ export const roomsAPI = {
   create: (data: {
     room_code: string
     room_name: string
+    passcode?: string
     description?: string
     start_time: string
     end_time: string
