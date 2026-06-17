@@ -1,12 +1,53 @@
 'use client'
 
 import { useState, useEffect, useRef, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { submissionsAPI, violationsAPI, questionsAPI, sessionsAPI, roomsAPI, livekitAPI } from '@/utils/api'
 import { useAuthStore } from '@/store/useStore'
 import Editor from '@monaco-editor/react'
-import { LiveKitRoom } from '@livekit/components-react'
+import { LiveKitRoom, useLocalParticipant } from '@livekit/components-react'
+import { Track } from 'livekit-client'
+
+function LocalTrackPublisher({ camStream, screenStream }: { camStream: MediaStream | null, screenStream: MediaStream | null }) {
+  const { localParticipant } = useLocalParticipant();
+  
+  useEffect(() => {
+    if (camStream && localParticipant) {
+      const videoTrack = camStream.getVideoTracks()[0];
+      if (videoTrack) {
+        // Unpublish existing first if any
+        localParticipant.videoTrackPublications.forEach(pub => {
+            if (pub.source === Track.Source.Camera && pub.track) {
+                localParticipant.unpublishTrack(pub.track);
+            }
+        });
+        localParticipant.publishTrack(videoTrack, { source: Track.Source.Camera }).catch(err => console.error("Failed to publish cam:", err));
+      }
+    }
+  }, [camStream, localParticipant]);
+
+  useEffect(() => {
+    if (screenStream && localParticipant) {
+      const videoTrack = screenStream.getVideoTracks()[0];
+      if (videoTrack) {
+        // Unpublish existing first if any
+        localParticipant.videoTrackPublications.forEach(pub => {
+            if (pub.source === Track.Source.ScreenShare && pub.track) {
+                localParticipant.unpublishTrack(pub.track);
+            }
+        });
+        localParticipant.publishTrack(videoTrack, { source: Track.Source.ScreenShare }).catch(err => console.error("Failed to publish screen:", err));
+      }
+    }
+  }, [screenStream, localParticipant]);
+
+  return null;
+}
 
 function ExamPageContent() {
+  const searchParams = useSearchParams();
+  const roomParam = searchParams.get('room');
+
   const [codeMap, setCodeMap] = useState<Record<number, string>>({})
   const [code, setCode] = useState('')
   const [output, setOutput] = useState('')
@@ -33,25 +74,42 @@ function ExamPageContent() {
   const [activeProblem, setActiveProblem] = useState<any>(null)
   const [roomId, setRoomId] = useState<number>(0)
   const [roomData, setRoomData] = useState<any>(null)
-  const [sessionId, setSessionId] = useState<number>(1)
+  const [sessionId, setSessionId] = useState<number | null>(null)
   const [sessionStartedAt, setSessionStartedAt] = useState<string | null>(null)
+  const [isWaiting, setIsWaiting] = useState(false)
+  const [waitTimer, setWaitTimer] = useState({ h: 0, m: 0, s: 0 })
+  const [systemAlert, setSystemAlert] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!roomData || !roomData.duration_minutes || !sessionStartedAt) return;
+    if (!roomData) return;
     
-    const start = new Date(sessionStartedAt.endsWith('Z') ? sessionStartedAt : sessionStartedAt + 'Z').getTime();
-    const durationMs = roomData.duration_minutes * 60 * 1000;
+    // Use roomData.start_time instead of sessionStartedAt to ensure global sync
+    const durationMins = roomData.duration_minutes || 120;
     
-    const interval = setInterval(() => {
+    const dateStr = roomData.start_time.endsWith('Z') || roomData.start_time.includes('+') 
+      ? roomData.start_time 
+      : roomData.start_time + 'Z';
+      
+    const start = new Date(dateStr).getTime();
+    const durationMs = durationMins * 60 * 1000;
+    
+    const updateTimer = () => {
       const now = new Date().getTime();
       const elapsedMs = now - start;
       const remainingMs = durationMs - elapsedMs;
       
       if (remainingMs <= 0) {
-        clearInterval(interval);
         setTimeLeft({ h: 0, m: 0, s: 0 });
-        alert('Hết giờ làm bài! Hệ thống sẽ nộp bài tự động và chuyển sang trang kết quả.');
-        window.location.href = `/exam/result?room=${roomData.room_id}`;
+        setSystemAlert('Hết giờ làm bài! Hệ thống sẽ nộp bài tự động và chuyển sang trang kết quả.');
+        
+        if (sessionId) {
+          sessionsAPI.end(sessionId).finally(() => {
+            setTimeout(() => { window.location.href = `/exam/result?room=${roomData.room_id}`; }, 3000);
+          });
+        } else {
+          setTimeout(() => { window.location.href = `/exam/result?room=${roomData.room_id}`; }, 3000);
+        }
+        return false; // return false to clear interval
       } else {
         const totalSeconds = Math.floor(remainingMs / 1000);
         setTimeLeft({
@@ -59,21 +117,35 @@ function ExamPageContent() {
           m: Math.floor((totalSeconds % 3600) / 60),
           s: totalSeconds % 60
         });
+        return true; // continue
       }
-    }, 1000);
+    };
+
+    // Initial update
+    const shouldContinue = updateTimer();
     
-    return () => clearInterval(interval);
-  }, [roomData, sessionStartedAt]);
+    if (shouldContinue) {
+      const interval = setInterval(() => {
+        if (!updateTimer()) {
+          clearInterval(interval);
+        }
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [roomData, sessionId]);
 
   const [tab, setTab] = useState<'problem' | 'output'>('problem')
 
   const user = useAuthStore(state => state.user)
+  const isHydrated = useAuthStore(state => state.isHydrated)
   const wsRef = useRef<WebSocket | null>(null)
   
   // Webcam refs
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [camStatus, setCamStatus] = useState<'starting' | 'ok' | 'error'>('starting')
+  const [camStream, setCamStream] = useState<MediaStream | null>(null)
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null)
   const [livekitToken, setLivekitToken] = useState('')
 
   // Drag state for webcam
@@ -102,13 +174,34 @@ function ExamPageContent() {
     e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
+  const router = require('next/navigation').useRouter()
+
+  useEffect(() => {
+    if (!isHydrated) return
+    if (!user) {
+      router.push('/login')
+    }
+  }, [isHydrated, user, router])
+
   // Load Exam Data
   useEffect(() => {
+    if (!isHydrated || !user) return
+
     const fetchExamData = async () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const roomStr = urlParams.get('room');
-      if (!roomStr) return;
-      const rid = parseInt(roomStr);
+      let rid = parseInt(roomParam || '');
+      
+      if (isNaN(rid)) {
+        if ((user as any).room_id) {
+          rid = parseInt((user as any).room_id);
+          // Optional: Update URL to reflect the room ID without reloading
+          window.history.replaceState(null, '', `/exam?room=${rid}`);
+        } else {
+          alert('Không tìm thấy thông tin phòng thi. Vui lòng vào lại từ trang đăng nhập.');
+          window.location.href = '/join';
+          return;
+        }
+      }
+      
       setRoomId(rid);
       
       try {
@@ -116,24 +209,65 @@ function ExamPageContent() {
         const roomRes = await roomsAPI.getById(rid);
         setRoomData(roomRes.data);
 
-        // Khởi tạo phiên thi (Session)
+        // Get LiveKit token early so instructor can monitor in waiting room
         try {
-          const sessionRes = await sessionsAPI.create({ room_id: rid });
-          setSessionId(sessionRes.data.session_id);
-          setSessionStartedAt(sessionRes.data.started_at);
-        } catch (err: any) {
-          console.error("Failed to create session", err);
-          if (user && user.user_id) {
-            try {
-              const sessList = await sessionsAPI.getByStudent(user.user_id, rid, true);
-              if (sessList.data && sessList.data.length > 0) {
-                setSessionId(sessList.data[0].session_id);
-                setSessionStartedAt(sessList.data[0].started_at);
-              }
-            } catch (e) {
-              console.error("Failed to fetch existing session", e);
-            }
+          if (useAuthStore.getState().user) {
+            const lkRes = await livekitAPI.generateToken({
+              room_name: `exam_room_${rid}`,
+              participant_name: useAuthStore.getState().user?.full_name || 'Student'
+            })
+            setLivekitToken(lkRes.data.token)
           }
+        } catch (err) {
+          console.error("Failed to get livekit token", err)
+        }
+
+        // Check if room has started
+        const sTimeStr = roomRes.data.start_time.endsWith('Z') || roomRes.data.start_time.includes('+') ? roomRes.data.start_time : roomRes.data.start_time + 'Z';
+        const startTime = new Date(sTimeStr).getTime();
+        if (new Date().getTime() < startTime) {
+          setIsWaiting(true);
+          return;
+        }
+
+        // Khởi tạo phiên thi (Session)
+        let currentSessionId: number | null = null;
+        let currentStartedAt: string | null = null;
+
+        if (user && user.user_id) {
+          try {
+            const allSess = await sessionsAPI.getByStudent(user.user_id, rid, false);
+            if (allSess.data && allSess.data.length > 0) {
+              const endedSession = allSess.data.find((s: any) => s.status === 'ended' || s.status === 'completed' || s.end_time != null);
+              if (endedSession) {
+                alert('Bạn đã nộp bài hoặc kết thúc thi. Không thể vào lại phòng thi!');
+                window.location.href = `/exam/result?room=${rid}`;
+                return;
+              }
+              const activeSess = allSess.data.find((s: any) => s.status === 'active' || s.end_time == null);
+              if (activeSess) {
+                currentSessionId = activeSess.session_id;
+                currentStartedAt = activeSess.started_at;
+              }
+            }
+          } catch (e) {
+            console.error("Failed to fetch sessions", e);
+          }
+        }
+
+        if (!currentSessionId) {
+          try {
+            const sessionRes = await sessionsAPI.create({ room_id: rid });
+            currentSessionId = sessionRes.data.session_id;
+            currentStartedAt = sessionRes.data.started_at;
+          } catch (err: any) {
+            console.error("Failed to create session", err);
+          }
+        }
+
+        if (currentSessionId) {
+          setSessionId(currentSessionId);
+          setSessionStartedAt(currentStartedAt);
         }
         
         // Tải danh sách câu hỏi
@@ -181,22 +315,35 @@ function ExamPageContent() {
         console.error("Lỗi khi tải đề thi:", err);
       }
       
-      // Get LiveKit token for student
-      try {
-        if (useAuthStore.getState().user) {
-          const lkRes = await livekitAPI.generateToken({
-            room_name: `exam_room_${rid}`,
-            participant_name: useAuthStore.getState().user?.full_name || 'Student'
-          })
-          setLivekitToken(lkRes.data.token)
-        }
-      } catch (err) {
-        console.error("Failed to get livekit token", err)
-      }
+      // Removed Livekit generation from here, moved up to support waiting room
     };
     
     fetchExamData();
-  }, []);
+  }, [isHydrated, user, roomParam]);
+
+  // Waiting Room Timer
+  useEffect(() => {
+    if (!isWaiting || !roomData) return;
+    const sTimeStr = roomData.start_time.endsWith('Z') || roomData.start_time.includes('+') ? roomData.start_time : roomData.start_time + 'Z';
+    const startTime = new Date(sTimeStr).getTime();
+    
+    const interval = setInterval(() => {
+      const now = new Date().getTime();
+      const diff = startTime - now;
+      if (diff <= 0) {
+        clearInterval(interval);
+        window.location.reload();
+      } else {
+        const totalSeconds = Math.floor(diff / 1000);
+        setWaitTimer({
+          h: Math.floor(totalSeconds / 3600),
+          m: Math.floor((totalSeconds % 3600) / 60),
+          s: totalSeconds % 60
+        });
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isWaiting, roomData]);
 
   // Bật Webcam
   useEffect(() => {
@@ -207,6 +354,7 @@ function ExamPageContent() {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
+        setCamStream(stream);
         setCamStatus('ok');
       } catch (err) {
         console.error("Lỗi khi mở Webcam:", err);
@@ -218,6 +366,13 @@ function ExamPageContent() {
       if (stream) stream.getTracks().forEach(track => track.stop());
     };
   }, []);
+
+  // Sync camStream to videoRef when layout changes (re-renders video element)
+  useEffect(() => {
+    if (camStream && videoRef.current && videoRef.current.srcObject !== camStream) {
+      videoRef.current.srcObject = camStream;
+    }
+  }); // Run on every render to ensure video is always synced
 
   // AI Proctoring: Gửi snapshot mỗi 5 giây
   useEffect(() => {
@@ -254,8 +409,10 @@ function ExamPageContent() {
   useEffect(() => {
     if (!user || !sessionId) return;
 
-    const handleVisibilityChange = async () => {
-      if (document.hidden) {
+    const handleVisibilityChange = async (e: Event) => {
+      const isLeaving = (e.type === 'visibilitychange' && document.hidden) || e.type === 'blur';
+
+      if (isLeaving) {
         try {
           await violationsAPI.create({
             session_id: sessionId,
@@ -264,12 +421,26 @@ function ExamPageContent() {
             severity: 'medium',
             description: 'Phát hiện chuyển tab hoặc thu nhỏ cửa sổ làm bài'
           });
-        } catch (e) { }
-      } else {
-        alert("⚠️ CẢNH BÁO VI PHẠM: Bạn vừa thoát hoặc chuyển khỏi tab làm bài!\\n\\nHành động này đã được tự động lưu lại hệ thống và gửi đến Giám thị.");
+        } catch (err) { }
       }
     };
+    
+    // EXPOSE CHO E2E TEST:
+    (window as any).__test_triggerViolation = async () => {
+      try {
+        await violationsAPI.create({
+          session_id: sessionId,
+          student_id: user.user_id,
+          violation_type: 'tab_switch',
+          severity: 'medium',
+          description: 'Phát hiện chuyển tab hoặc thu nhỏ cửa sổ làm bài'
+        });
+      } catch (e) { }
+    };
+    
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleVisibilityChange); 
+    window.addEventListener('focus', handleVisibilityChange);
 
     let afkTimeout: NodeJS.Timeout;
     const resetAFKTimer = () => {
@@ -279,7 +450,7 @@ function ExamPageContent() {
           await violationsAPI.create({
             session_id: sessionId,
             student_id: user.user_id,
-            violation_type: 'inactive_30s',
+            violation_type: 'time_exceeded',
             severity: 'low',
             description: 'Sinh viên không có tương tác trong 30 giây'
           });
@@ -293,6 +464,7 @@ function ExamPageContent() {
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleVisibilityChange);
       events.forEach(event => document.removeEventListener(event, resetAFKTimer));
       clearTimeout(afkTimeout);
     };
@@ -302,43 +474,67 @@ function ExamPageContent() {
   useEffect(() => {
     if (!user || typeof window === 'undefined' || !roomId) return;
 
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
-    const ws = new WebSocket(`${wsUrl}/ws/${roomId}/${user.user_id}`);
+    let ws: WebSocket;
+    let reconnectTimer: NodeJS.Timeout;
+    let pingTimer: NodeJS.Timeout;
 
-    ws.onopen = () => console.log('Connected to WebSocket server');
+    const connectWS = () => {
+      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
+      ws = new WebSocket(`${wsUrl}/ws/${roomId}/${user.user_id}`);
+      
+      ws.onopen = () => {
+        console.log('Connected to WebSocket server');
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        pingTimer = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 30000);
+      };
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'grading_result') {
-          setSubmitting(false);
-          setRunning(false);
-          setGradingResult(data);
-          
-          if (data.status === 'completed') {
-            setOutput('');
-          } else {
-            setOutput(`✗ Chấm bài thất bại.\\nTrạng thái: ${data.status}`);
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'grading_result') {
+            setSubmitting(false);
+            setRunning(false);
+            setGradingResult(data);
+            
+            if (data.status === 'completed') {
+              setOutput('');
+            } else {
+              setOutput(`✗ Chấm bài thất bại.\nTrạng thái: ${data.status}`);
+            }
+          } else if (data.type === 'kick_student') {
+            if (data.student_id === user.user_id) {
+              setSystemAlert('Bạn đã bị giảng viên xóa khỏi phòng thi do vi phạm quy chế!');
+              setTimeout(() => { window.location.href = '/'; }, 3000);
+            }
+          } else if (data.type === 'proctoring_violation') {
+            const viols = data.violations.map((v: any) => v.description).join('\n');
+            setSystemAlert(`🚨 GIÁM THỊ NHẮC NHỞ / CẢNH BÁO TỪ HỆ THỐNG 🚨\n\nBạn vừa vi phạm quy chế thi:\n${viols}\n\nHành vi này đã được lưu vào hồ sơ thi. Vui lòng nghiêm túc làm bài!`);
           }
-        } else if (data.type === 'kick_student') {
-          if (data.student_id === user.user_id) {
-            alert('Bạn đã bị giảng viên xóa khỏi phòng thi do vi phạm quy chế!');
-            window.location.href = '/';
-          }
-        } else if (data.type === 'proctoring_violation') {
-          const viols = data.violations.map((v: any) => v.description).join('\\n');
-          alert(`🚨 GIÁM THỊ NHẮC NHỞ / CẢNH BÁO TỪ HỆ THỐNG 🚨\\n\\nBạn vừa vi phạm quy chế thi:\\n${viols}\\n\\nHành vi này đã được lưu vào hồ sơ thi. Vui lòng nghiêm túc làm bài!`);
+        } catch (e) {
+          console.error('Error parsing WS message', e);
         }
-      } catch (e) {
-        console.error('Error parsing WS message', e);
-      }
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket disconnected. Attempting to reconnect...');
+        reconnectTimer = setTimeout(connectWS, 3000);
+      };
+
+      wsRef.current = ws;
     };
 
-    wsRef.current = ws;
+    connectWS();
 
-    return () => {
-      ws.close();
-    };
+          return () => {
+        if (pingTimer) clearInterval(pingTimer);
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        if (ws) ws.close();
+      };
   }, [user, roomId]);
 
   const runCode = async () => {
@@ -349,11 +545,20 @@ function ExamPageContent() {
     setOutput(`Đang chạy biên dịch...\nInput test: ${customInput || '(Trống)'}`);
     
     try {
-      // Mocking local run with instant evaluation logic
-      await new Promise(r => setTimeout(r, 800));
-      setOutput(`> Chạy thử thành công!\n\nLưu ý: Đây chỉ là chức năng chạy nháp cục bộ.\nHãy bấm [Nộp bài] để hệ thống ghi nhận điểm chính thức.`);
+      const res = await submissionsAPI.runCode({
+        code_content: code,
+        language: lang,
+        custom_input: customInput
+      });
+      const data = res.data;
+      
+      if (data.error) {
+        setOutput(`> Lỗi thực thi:\n\n${data.error}`);
+      } else {
+        setOutput(`> Output:\n${data.stdout}\n\n[Thời gian chạy: ${data.execution_ms}ms]`);
+      }
     } catch (err: any) {
-      setOutput(`> Lỗi biên dịch: \n\n${err.message}`);
+      setOutput(`> Lỗi kết nối máy chủ: \n\n${err.response?.data?.detail || err.message}`);
     } finally {
       setRunning(false);
     }
@@ -391,21 +596,94 @@ function ExamPageContent() {
   const totalExam = 2 * 3600
   const timerPct = (totalSeconds / totalExam) * 100
 
+  const renderContent = () => {
+  if (isWaiting) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg-main)', color: 'white', position: 'relative' }}>
+        <div style={{ position: 'absolute', top: 20, right: 20, width: 240, borderRadius: 16, overflow: 'hidden', border: '2px solid rgba(255,255,255,0.1)', background: '#000', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
+          <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', display: 'block', transform: 'scaleX(-1)' }} />
+          <div style={{ position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.6)', padding: '2px 8px', borderRadius: 10, fontSize: 10, color: '#34d399', display: 'flex', alignItems: 'center', gap: 4, backdropFilter: 'blur(4px)' }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#34d399', animation: 'pulse 1.5s infinite' }} /> Kết nối Webcam
+          </div>
+        </div>
+
+        <div className="glass-card animate-fade-in-up" style={{ padding: 40, borderRadius: 24, textAlign: 'center', maxWidth: 500, width: '90%', border: '1px solid rgba(99,102,241,0.2)', boxShadow: '0 20px 40px rgba(0,0,0,0.4)' }}>
+          <div style={{ width: 80, height: 80, background: 'linear-gradient(135deg, rgba(99,102,241,0.2), rgba(6,182,212,0.2))', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px', boxShadow: '0 0 20px rgba(99,102,241,0.2)' }}>
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
+          <h2 style={{ fontSize: 26, fontWeight: 900, marginBottom: 16, letterSpacing: '-0.02em' }}>Phòng Thi Chưa Mở</h2>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: 32, lineHeight: 1.6, fontSize: 15 }}>
+            Bạn đã điểm danh thành công vào phòng thi <strong style={{ color: '#fff' }}>{roomData?.room_name}</strong>. Giám thị đã có thể quan sát bạn qua Webcam. Vui lòng giữ trật tự và chờ đến giờ làm bài.
+          </p>
+          <div style={{ background: 'rgba(0,0,0,0.3)', padding: 24, borderRadius: 16, border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12, fontWeight: 700 }}>Đề thi sẽ hiện ra sau</div>
+            <div style={{ fontSize: 42, fontFamily: '"JetBrains Mono", monospace', fontWeight: 800, color: '#34d399', letterSpacing: '0.05em', textShadow: '0 0 20px rgba(52,211,153,0.3)' }}>
+              {String(waitTimer.h).padStart(2,'0')}:{String(waitTimer.m).padStart(2,'0')}:{String(waitTimer.s).padStart(2,'0')}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const startScreenShare = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      setScreenStream(stream);
+      // Khi stream bị stop, setScreenStream(null) để bắt buộc chia sẻ lại
+      stream.getVideoTracks()[0].onended = () => {
+        setScreenStream(null);
+      };
+    } catch (err) {
+      alert("Bạn BẮT BUỘC phải chia sẻ toàn màn hình để làm bài thi!");
+    }
+  };
+
+  if (!isWaiting && !screenStream) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg-main)', color: 'white', position: 'relative', padding: 24, textAlign: 'center' }}>
+        <div className="glass-card animate-fade-in-up" style={{ padding: 40, borderRadius: 24, maxWidth: 500, width: '100%', border: '1px solid rgba(6,182,212,0.3)', boxShadow: '0 20px 40px rgba(0,0,0,0.5)' }}>
+          <div style={{ width: 80, height: 80, background: 'linear-gradient(135deg, rgba(6,182,212,0.2), rgba(59,130,246,0.2))', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#67e8f9" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </div>
+          <h2 style={{ fontSize: 24, fontWeight: 900, marginBottom: 16 }}>Bắt Buộc Chia Sẻ Màn Hình</h2>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: 32, lineHeight: 1.6 }}>
+            Để đảm bảo tính công bằng của kỳ thi, bạn cần chia sẻ <strong>Toàn bộ màn hình</strong> (Entire Screen) để giám thị có thể quan sát quá trình làm bài của bạn.
+          </p>
+          <button className="btn-primary" onClick={startScreenShare} style={{ width: '100%', padding: 16, fontSize: 16, borderRadius: 12 }}>
+            CHIA SẺ MÀN HÌNH VÀ BẮT ĐẦU THI
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', position: 'relative', zIndex: 1 }}>
 
-      {/* ── BỘ PHÁT SÓNG LIVEKIT ẨN ── */}
-      {livekitToken && (
-        <div style={{ display: 'none' }}>
-          <LiveKitRoom
-            token={livekitToken}
-            serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL || 'ws://localhost:7880'}
-            video={true}
-            audio={false}
-            screen={true}
-          />
+      {/* SYSTEM ALERT MODAL */}
+      {systemAlert && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(10px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div className="glass-card animate-fade-in-up" style={{ maxWidth: 450, width: '100%', background: 'rgba(15,15,30,0.95)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 24, overflow: 'hidden', boxShadow: '0 20px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(239,68,68,0.1)' }}>
+            <div style={{ padding: '24px 32px', borderBottom: '1px solid rgba(255,255,255,0.05)', background: 'linear-gradient(135deg, rgba(239,68,68,0.15), transparent)', display: 'flex', alignItems: 'center', gap: 16 }}>
+              <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'rgba(239,68,68,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: '#fca5a5' }}>Cảnh Báo Của Hệ Thống</h3>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Oculide Proctoring System</div>
+              </div>
+            </div>
+            <div style={{ padding: 32, fontSize: 15, color: '#f1f5f9', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+              {systemAlert}
+            </div>
+            <div style={{ padding: '0 32px 32px' }}>
+              <button onClick={() => setSystemAlert(null)} className="btn-primary" style={{ width: '100%', padding: '14px', borderRadius: 12, background: 'linear-gradient(135deg, #ef4444, #dc2626)', boxShadow: '0 8px 20px rgba(239,68,68,0.3)', fontWeight: 800, border: 'none', color: '#fff', cursor: 'pointer' }}>ĐÃ HIỂU VÀ QUAY LẠI LÀM BÀI</button>
+            </div>
+          </div>
         </div>
       )}
+
 
       {/* ── EXAM NAVBAR ── */}
       <nav style={{
@@ -447,8 +725,15 @@ function ExamPageContent() {
             </span>
           </div>
           
-          <button className="btn-primary" style={{ background: 'var(--bg-card)', border: '1px solid #16a34a', color: '#16a34a', boxShadow: 'none', padding: '8px 16px', fontSize: 13, fontWeight: 700 }} onClick={() => {
+          <button className="btn-primary" style={{ background: 'var(--bg-card)', border: '1px solid #16a34a', color: '#16a34a', boxShadow: 'none', padding: '8px 16px', fontSize: 13, fontWeight: 700 }} onClick={async () => {
             if (confirm('Bạn có chắc chắn muốn nộp toàn bộ và kết thúc bài thi sớm? Không thể làm lại!')) {
+              try {
+                if (sessionId) {
+                  await sessionsAPI.end(sessionId);
+                }
+              } catch (e) {
+                console.error('Failed to end session', e);
+              }
               window.location.href = `/exam/result?room=${roomId}`;
             }
           }}>
@@ -717,8 +1002,16 @@ function ExamPageContent() {
                     {gradingResult && gradingResult.status === 'completed' ? (
                       <div style={{ color: '#e2e8f0', fontSize: 13 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                          <span style={{ fontSize: 16, fontWeight: 800, color: '#16a34a' }}>AC</span>
-                          <span style={{ color: '#94a3b8' }}>| Điểm: {gradingResult.score_percentage / 10}/{activeProblem?.max_points || 10}</span>
+                          {gradingResult.score_percentage === 100 ? (
+                            <span style={{ fontSize: 16, fontWeight: 800, color: '#16a34a' }}>AC</span>
+                          ) : gradingResult.score_percentage > 0 ? (
+                            <span style={{ fontSize: 16, fontWeight: 800, color: '#eab308' }}>Partial</span>
+                          ) : gradingResult.test_results?.every((tc: any) => tc.error) ? (
+                            <span style={{ fontSize: 16, fontWeight: 800, color: '#ef4444' }}>RE / CE</span>
+                          ) : (
+                            <span style={{ fontSize: 16, fontWeight: 800, color: '#ef4444' }}>WA</span>
+                          )}
+                          <span style={{ color: '#94a3b8' }}>| Điểm: {Math.round((gradingResult.score_percentage / 100) * (activeProblem?.max_points || 10) * 100) / 100}/{activeProblem?.max_points || 10}</span>
                         </div>
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                           {gradingResult.test_results?.map((tc: any, i: number) => (
@@ -781,9 +1074,30 @@ function ExamPageContent() {
         <div style={{ position: 'absolute', inset: 0, background: 'url("data:image/svg+xml,%3Csvg width=\'20\' height=\'20\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cpath d=\'M 20 0 L 0 0 0 20\' fill=\'none\' stroke=\'rgba(6,182,212,0.05)\' stroke-width=\'1\'/%3E%3C/svg%3E")', pointerEvents: 'none', zIndex: 5 }} />
       </div>
       <canvas ref={canvasRef} style={{ display: 'none' }} />
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   )
+  }; // End of renderContent
+
+  return (
+    <>
+      {/* GLOBAL LIVEKIT ROOM - DO NOT UNMOUNT */}
+      {livekitToken && (
+        <div style={{ display: 'none' }}>
+          <LiveKitRoom
+            token={livekitToken}
+            serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL || 'ws://localhost:7880'}
+            video={false}
+            audio={false}
+            screen={false}
+          >
+             <LocalTrackPublisher camStream={camStream} screenStream={screenStream} />
+          </LiveKitRoom>
+        </div>
+      )}
+      
+      {renderContent()}
+    </>
+  );
 }
 
 export default function ExamPage() {

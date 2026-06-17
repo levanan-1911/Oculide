@@ -21,6 +21,16 @@ class SubmissionCreate(BaseModel):
     language: str
     attempt_number: int = 1
 
+class CodeRunRequest(BaseModel):
+    code_content: str
+    language: str
+    custom_input: str
+
+class CodeRunResponse(BaseModel):
+    stdout: str
+    error: Optional[str]
+    execution_ms: int
+
 class SubmissionResponse(BaseModel):
     submission_id: int
     room_id: int
@@ -31,8 +41,11 @@ class SubmissionResponse(BaseModel):
     language: str
     submitted_at: datetime
     status: str
+    total_points: Optional[float] = None
+    max_points: Optional[float] = None
+    score_percentage: Optional[float] = None
 
-@router.post("/", response_model=SubmissionResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=SubmissionResponse, status_code=status.HTTP_201_CREATED)
 async def create_submission_endpoint(
     submission_data: SubmissionCreate,
     current_user: dict = Depends(get_current_user)
@@ -101,8 +114,26 @@ async def create_submission_endpoint(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating submission: {str(e)}"
+            detail=str(e)
         )
+
+@router.post("/run", response_model=CodeRunResponse)
+async def run_custom_code(
+    run_req: CodeRunRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    from tasks.grading_tasks import _run_in_docker_sandbox, SANDBOX_TIME_LIMIT
+    result = _run_in_docker_sandbox(
+        code=run_req.code_content,
+        language=run_req.language,
+        stdin_data=run_req.custom_input,
+        time_limit=SANDBOX_TIME_LIMIT,
+    )
+    return CodeRunResponse(
+        stdout=result.get("stdout", ""),
+        error=result.get("error"),
+        execution_ms=result.get("execution_ms", 0)
+    )
 
 @router.get("/student/{student_id}", response_model=List[SubmissionResponse])
 async def get_student_submissions(
@@ -226,3 +257,33 @@ async def update_submission_status_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error updating submission status: {str(e)}"
         )
+
+@router.get("/{submission_id}/results")
+async def get_submission_results(
+    submission_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    # Check permissions (instructor or admin only)
+    if current_user["role"] not in ["instructor", "admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only instructors and admins can view grading details"
+        )
+        
+    submission = get_submission_by_id(submission_id)
+    if not submission:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
+        
+    # Check if instructor owns the room
+    if current_user["role"] == "instructor":
+        from database.room_db import get_room_by_id
+        room = get_room_by_id(submission["room_id"])
+        if not room or room["instructor_id"] != current_user["user_id"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+            
+    from database.submission_db import get_submission_grading_results
+    results = get_submission_grading_results(submission_id)
+    return {
+        "submission": submission,
+        "results": results
+    }

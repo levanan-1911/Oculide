@@ -35,7 +35,7 @@ class ViolationResponse(BaseModel):
     reviewed_by: Optional[int]
     reviewed_at: Optional[datetime]
 
-@router.post("/", response_model=ViolationResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ViolationResponse, status_code=status.HTTP_201_CREATED)
 async def create_violation_endpoint(
     violation_data: ViolationCreate,
     current_user: dict = Depends(get_current_user)
@@ -100,6 +100,7 @@ async def create_violation_endpoint(
                     ]
                 }
                 r.publish("ws_updates", json.dumps(msg))
+                print(f"📤 [REDIS] Published proctoring_violation for room {session['room_id']}")
         except Exception as ws_e:
             import logging
             logging.getLogger(__name__).error(f"Failed to publish WS update: {ws_e}")

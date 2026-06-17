@@ -25,7 +25,7 @@ class MessageResponse(BaseModel):
     message: str
     sent_at: datetime
 
-@router.post("/", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def send_message(
     message_data: MessageCreate,
     current_user: dict = Depends(get_current_user)

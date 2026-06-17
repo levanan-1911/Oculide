@@ -20,6 +20,21 @@ export default function JoinRoomPage() {
 
   const inputRef = useRef<HTMLInputElement>(null)
 
+  const user = useAuthStore((state) => state.user)
+  const isHydrated = useAuthStore((state) => state.isHydrated)
+
+  useEffect(() => {
+    if (isHydrated && user) {
+      if (user.role === 'instructor' || user.role === 'admin') {
+        router.push('/instructor')
+      } else {
+        if ((user as any).room_id) {
+          router.push(`/exam?room=${(user as any).room_id}`)
+        }
+      }
+    }
+  }, [isHydrated, user, router])
+
   // Auto focus room code on load
   useEffect(() => {
     inputRef.current?.focus()

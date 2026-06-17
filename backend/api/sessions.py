@@ -31,7 +31,7 @@ class SessionResponse(BaseModel):
     browser_fingerprint: Optional[str]
     status: str
 
-@router.post("/", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_exam_session(
     session_data: SessionCreate,
     current_user: dict = Depends(get_current_user)

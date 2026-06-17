@@ -68,7 +68,7 @@ class TestCaseResponse(BaseModel):
     points: float
     created_at: datetime
 
-@router.post("/", response_model=QuestionResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=QuestionResponse, status_code=status.HTTP_201_CREATED)
 async def create_exam_question(
     question_data: QuestionCreate,
     current_user: dict = Depends(get_current_user)

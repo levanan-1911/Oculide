@@ -49,7 +49,7 @@ class RoomResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-@router.post("/", response_model=RoomResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=RoomResponse, status_code=status.HTTP_201_CREATED)
 async def create_exam_room(
     room_data: RoomCreate,
     current_user: dict = Depends(get_current_user)
@@ -112,7 +112,7 @@ async def create_exam_room(
             detail=f"Error creating room: {str(e)}"
         )
 
-@router.get("/", response_model=List[RoomResponse])
+@router.get("", response_model=List[RoomResponse])
 async def get_rooms(
     skip: int = 0,
     limit: int = 100,
@@ -161,12 +161,31 @@ async def get_room_dashboard(
     dashboard_data = get_room_dashboard_data(room_id)
     connected_users = manager.get_connected_users(room_id)
     
+    print(f"DASHBOARD DATA FOR ROOM {room_id}: {dashboard_data}", flush=True)
+    print(f"CONNECTED USERS FOR ROOM {room_id}: {connected_users}", flush=True)
+    print(f"ACTIVE CONNECTIONS DUMP: {manager.active_connections}", flush=True)
+    
     for student in dashboard_data:
         # If DB says active but they are not connected to WebSocket, they are offline
         if student["status"] == "active" and student["id"] not in connected_users:
             student["status"] = "offline"
             
     return dashboard_data
+
+@router.get("/{room_id}/scoreboard")
+async def get_room_scoreboard_endpoint(
+    room_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    room = get_room_by_id(room_id)
+    if not room:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
+        
+    if current_user["role"] == "instructor" and room["instructor_id"] != current_user["user_id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only view dashboard for your own rooms")
+        
+    from database.room_db import get_room_scoreboard
+    return get_room_scoreboard(room_id)
 
 @router.get("/{room_id}", response_model=RoomResponse)
 async def get_room(

@@ -1,9 +1,13 @@
-import React from 'react'
+import '@testing-library/jest-dom'
+import { render, screen } from '@testing-library/react'
 
-export default function Home() {
-  return (
-    <div data-testid="home-page">
-      <h1>Oculide - Online Exam System</h1>
-    </div>
-  )
+function DummyComponent() {
+  return <div data-testid="dummy">Oculide Dummy</div>
 }
+
+describe('Dummy Test', () => {
+  it('renders a dummy component', () => {
+    render(<DummyComponent />)
+    expect(screen.getByTestId('dummy')).toBeInTheDocument()
+  })
+})

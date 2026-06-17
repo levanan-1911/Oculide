@@ -12,6 +12,7 @@ function ExamResultContent() {
   const roomId = searchParams.get('room')
   const router = useRouter()
   const user = useAuthStore(state => state.user)
+  const isHydrated = useAuthStore(state => state.isHydrated)
 
   const [loading, setLoading] = useState(true)
   const [room, setRoom] = useState<any>(null)
@@ -19,7 +20,14 @@ function ExamResultContent() {
   const [submissions, setSubmissions] = useState<any[]>([])
 
   useEffect(() => {
-    if (!user || !roomId) return;
+    if (!isHydrated) return
+    if (!user) {
+      router.push('/login')
+    }
+  }, [isHydrated, user, router])
+
+  useEffect(() => {
+    if (!isHydrated || !user || !roomId) return;
     
     const fetchData = async () => {
       try {
@@ -191,9 +199,12 @@ function ExamResultContent() {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
             In báo cáo
           </button>
-          <Link href="/" className="btn-primary" style={{ padding: '16px 40px', borderRadius: 14, fontWeight: 800, fontSize: 16, boxShadow: `0 8px 24px ${gradeColor}33`, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button onClick={() => {
+            useAuthStore.getState().logout();
+            window.location.href = '/';
+          }} className="btn-primary" style={{ padding: '16px 40px', borderRadius: 14, fontWeight: 800, fontSize: 16, boxShadow: `0 8px 24px ${gradeColor}33`, display: 'flex', alignItems: 'center', gap: 8 }}>
             Thoát hệ thống <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-          </Link>
+          </button>
         </div>
 
       </div>

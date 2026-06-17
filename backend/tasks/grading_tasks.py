@@ -29,7 +29,7 @@ except ImportError:
     DOCKER_AVAILABLE = False
 
 from database.question_db import get_test_cases_by_question
-from database.submission_db import update_submission_status
+from database.submission_db import update_submission_status, save_grading_results
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,11 @@ def grade_submission(
             )
 
             def normalize(s):
-                return str(s).replace('\r\n', '\n').strip() if s else ""
+                if not s: return ""
+                lines = [line.rstrip() for line in str(s).replace('\r\n', '\n').split('\n')]
+                while lines and not lines[-1]:
+                    lines.pop()
+                return '\n'.join(lines)
 
             passed = (
                 not result["error"]
@@ -129,6 +133,10 @@ def grade_submission(
             })
 
         score_pct = round((total_points / max_points * 100), 2) if max_points > 0 else 0
+        
+        # Save grading results to database
+        save_grading_results(submission_id, results)
+        
         update_submission_status(submission_id, "completed")
         
         # Notify WebSocket via Redis
@@ -226,7 +234,13 @@ def _run_in_docker_sandbox(
     )
 
     try:
-        client = docker.from_env(timeout=time_limit + 5)
+        try:
+            client = docker.from_env(timeout=time_limit + 5)
+            client.ping()
+        except docker.errors.DockerException as e:
+            logger.warning(f"Docker daemon unreachable ({e}), falling back to subprocess.")
+            return _run_subprocess_fallback(code, language, stdin_data, time_limit)
+
         start = time.monotonic()
 
         output = client.containers.run(
@@ -253,11 +267,14 @@ def _run_in_docker_sandbox(
         stderr = e.stderr.decode("utf-8", errors="replace") if e.stderr else str(e)
         return {"stdout": "", "execution_ms": 0, "error": stderr[:500]}
     except ImageNotFound:
-        return {"stdout": "", "execution_ms": 0, "error": f"Docker image not found: {image}"}
+        logger.warning(f"Docker image not found: {image}. Falling back to subprocess.")
+        return _run_subprocess_fallback(code, language, stdin_data, time_limit)
     except APIError as e:
-        return {"stdout": "", "execution_ms": 0, "error": f"Docker API error: {e}"}
+        logger.warning(f"Docker API error ({e}). Falling back to subprocess.")
+        return _run_subprocess_fallback(code, language, stdin_data, time_limit)
     except Exception as e:
-        return {"stdout": "", "execution_ms": 0, "error": str(e)[:500]}
+        logger.warning(f"Unexpected Docker error ({e}). Falling back to subprocess.")
+        return _run_subprocess_fallback(code, language, stdin_data, time_limit)
 
 
 # ─── Subprocess Fallback (DEV ONLY — NEVER use in production) ─────────────────

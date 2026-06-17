@@ -1,6 +1,8 @@
 import axios from 'axios'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const API_URL = process.env.NEXT_PUBLIC_API_URL !== undefined 
+  ? process.env.NEXT_PUBLIC_API_URL 
+  : 'http://localhost:8000'
 
 const api = axios.create({
   baseURL: API_URL,
@@ -25,8 +27,9 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Token expired or invalid
-      if (typeof window !== 'undefined') {
+      // Bỏ qua nếu lỗi 401 đến từ API login (để UI tự hiển thị lỗi Sai mật khẩu)
+      const isLoginAPI = error.config?.url?.includes('/api/auth/login');
+      if (!isLoginAPI && typeof window !== 'undefined') {
         localStorage.removeItem('token')
         localStorage.removeItem('user')
         window.location.href = '/login'
@@ -77,14 +80,16 @@ export const roomsAPI = {
     end_time: string
     duration_minutes: number
     max_attempts?: number
-  }) => api.post('/api/rooms/', data),
+  }) => api.post('/api/rooms', data),
   
   getAll: (skip = 0, limit = 100) =>
-    api.get(`/api/rooms/?skip=${skip}&limit=${limit}`),
+    api.get(`/api/rooms?skip=${skip}&limit=${limit}`),
   
   getById: (room_id: number) => api.get(`/api/rooms/${room_id}`),
   
   getDashboard: (room_id: number) => api.get(`/api/rooms/${room_id}/dashboard`),
+  
+  getScoreboard: (room_id: number) => api.get(`/api/rooms/${room_id}/scoreboard`),
   
   update: (room_id: number, data: any) =>
     api.put(`/api/rooms/${room_id}`, data),
@@ -109,7 +114,7 @@ export const questionsAPI = {
       is_hidden: boolean
       points: number
     }>
-  }) => api.post('/api/questions/', data),
+  }) => api.post('/api/questions', data),
   
   getByRoom: (room_id: number) =>
     api.get(`/api/questions/room/${room_id}`),
@@ -141,7 +146,13 @@ export const submissionsAPI = {
     code_content: string
     language: string
     attempt_number?: number
-  }) => api.post('/api/submissions/', data),
+  }) => api.post('/api/submissions', data),
+  
+  runCode: (data: {
+    code_content: string
+    language: string
+    custom_input: string
+  }) => api.post('/api/submissions/run', data),
   
   getByStudent: (student_id: number, room_id?: number) =>
     api.get(`/api/submissions/student/${student_id}${room_id ? `?room_id=${room_id}` : ''}`),
@@ -151,6 +162,9 @@ export const submissionsAPI = {
   
   getById: (submission_id: number) =>
     api.get(`/api/submissions/${submission_id}`),
+    
+  getResults: (submission_id: number) =>
+    api.get(`/api/submissions/${submission_id}/results`),
   
   updateStatus: (submission_id: number, status: string) =>
     api.patch(`/api/submissions/${submission_id}/status`, { status }),
@@ -162,7 +176,7 @@ export const sessionsAPI = {
     ip_address?: string
     user_agent?: string
     browser_fingerprint?: string
-  }) => api.post('/api/sessions/', data),
+  }) => api.post('/api/sessions', data),
   
   getByRoom: (room_id: number, active_only = false) =>
     api.get(`/api/sessions/room/${room_id}?active_only=${active_only}`),
@@ -207,7 +221,7 @@ export const violationsAPI = {
     severity?: string
     description?: string
     snapshot_data?: string
-  }) => api.post('/api/violations/', data),
+  }) => api.post('/api/violations', data),
   
   getBySession: (session_id: number) =>
     api.get(`/api/violations/session/${session_id}`),
@@ -224,7 +238,7 @@ export const chatAPI = {
     room_id: number
     recipient_id?: number
     message: string
-  }) => api.post('/api/chat/', data),
+  }) => api.post('/api/chat', data),
   
   getRoomMessages: (room_id: number, limit = 50) =>
     api.get(`/api/chat/room/${room_id}?limit=${limit}`),

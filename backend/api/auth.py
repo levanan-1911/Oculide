@@ -127,6 +127,7 @@ async def register(user_data: UserRegister):
 
 @router.post("/login", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    print(f"LOGIN ATTEMPT: username='{form_data.username}', password='{form_data.password}'")
     # Allow login by username, email, or student_id
     from database.user_db import get_user_by_email, get_sqlserver_connection
     
@@ -298,17 +299,17 @@ GOOGLE_CLIENT_ID = getattr(settings, 'GOOGLE_CLIENT_ID', 'YOUR_GOOGLE_CLIENT_ID'
 GOOGLE_CLIENT_SECRET = getattr(settings, 'GOOGLE_CLIENT_SECRET', 'YOUR_GOOGLE_CLIENT_SECRET')
 GITHUB_CLIENT_ID = getattr(settings, 'GITHUB_CLIENT_ID', 'YOUR_GITHUB_CLIENT_ID')
 GITHUB_CLIENT_SECRET = getattr(settings, 'GITHUB_CLIENT_SECRET', 'YOUR_GITHUB_CLIENT_SECRET')
-FRONTEND_URL = "http://localhost:3000"
+FRONTEND_URL = "https://oculide.id.vn"
 
 @router.get("/login/google")
 async def login_google():
-    redirect_uri = "http://localhost:8000/api/auth/callback/google"
+    redirect_uri = "https://api.oculide.id.vn/api/auth/callback/google"
     url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={GOOGLE_CLIENT_ID}&response_type=code&scope=openid%20email%20profile&redirect_uri={urllib.parse.quote(redirect_uri)}"
     return RedirectResponse(url)
 
 @router.get("/callback/google")
 async def auth_google(code: str):
-    redirect_uri = "http://localhost:8000/api/auth/callback/google"
+    redirect_uri = "https://api.oculide.id.vn/api/auth/callback/google"
     token_url = "https://oauth2.googleapis.com/token"
     
     async with httpx.AsyncClient() as client:
@@ -341,7 +342,7 @@ async def auth_google(code: str):
 
 @router.get("/login/github")
 async def login_github():
-    redirect_uri = "http://localhost:8000/api/auth/callback/github"
+    redirect_uri = "https://api.oculide.id.vn/api/auth/callback/github"
     url = f"https://github.com/login/oauth/authorize?client_id={GITHUB_CLIENT_ID}&redirect_uri={urllib.parse.quote(redirect_uri)}&scope=user:email"
     return RedirectResponse(url)
 
@@ -398,7 +399,7 @@ def handle_oauth_user(email: str, full_name: str):
             password_hash=get_password_hash(str(uuid.uuid4())), # random password
             email=email,
             full_name=full_name,
-            role="student", # default role
+            role="instructor", # Giảng viên đăng ký bằng Google mặc định là instructor
             student_id=None
         )
     

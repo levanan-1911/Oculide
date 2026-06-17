@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     LIVEKIT_API_SECRET: str = "secret"
     
     # CORS
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:3002,http://localhost:3001"
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:3002,http://localhost:3001,https://oculide.id.vn"
     
     # App
     APP_NAME: str = "Exam System API"

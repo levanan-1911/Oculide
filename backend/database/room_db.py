@@ -167,21 +167,7 @@ def get_room_dashboard_data(room_id: int) -> List[Dict]:
                     FROM ViolationLogs 
                     WHERE session_id IN (SELECT session_id FROM ExamSessions WHERE room_id = ? AND student_id = u.user_id)
                 ) as violations,
-                COALESCE((
-                    SELECT SUM(max_score) FROM (
-                        SELECT MAX(sub_score) as max_score
-                        FROM (
-                            SELECT s.question_id, s.submission_id, 
-                                   COALESCE(SUM(tc.points), 0) as sub_score
-                            FROM StudentSubmissions s
-                            LEFT JOIN GradingResults gr ON s.submission_id = gr.submission_id AND gr.is_passed = 1
-                            LEFT JOIN TestCases tc ON gr.test_case_id = tc.test_case_id
-                            WHERE s.room_id = ? AND s.student_id = u.user_id
-                            GROUP BY s.question_id, s.submission_id
-                        ) t1
-                        GROUP BY question_id
-                    ) t2
-                ), 0) as score,
+                COALESCE(score_table.total_score, 0) as score,
                 (
                     SELECT COUNT(DISTINCT question_id) 
                     FROM StudentSubmissions 
@@ -189,12 +175,79 @@ def get_room_dashboard_data(room_id: int) -> List[Dict]:
                 ) as progress
             FROM Users u
             INNER JOIN StudentEnrollments e ON u.user_id = e.student_id
+            OUTER APPLY (
+                SELECT SUM(max_score) as total_score FROM (
+                    SELECT MAX(sub_score) as max_score
+                    FROM (
+                        SELECT s.question_id, s.submission_id, 
+                               COALESCE(SUM(tc.points), 0) as sub_score
+                        FROM StudentSubmissions s
+                        LEFT JOIN GradingResults gr ON s.submission_id = gr.submission_id AND gr.is_passed = 1
+                        LEFT JOIN TestCases tc ON gr.test_case_id = tc.test_case_id
+                        WHERE s.room_id = ? AND s.student_id = u.user_id
+                        GROUP BY s.question_id, s.submission_id
+                    ) t1
+                    GROUP BY question_id
+                ) t2
+            ) score_table
             WHERE e.room_id = ?
         """
         cursor.execute(query, (room_id, room_id, room_id, room_id, room_id))
         rows = cursor.fetchall()
         columns = [column[0] for column in cursor.description]
         return [dict(zip(columns, row)) for row in rows]
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_room_scoreboard(room_id: int) -> dict:
+    conn = get_sqlserver_connection()
+    cursor = conn.cursor()
+    try:
+        # Get users
+        cursor.execute("SELECT u.user_id, u.username, u.full_name, u.student_id FROM Users u JOIN StudentEnrollments e ON u.user_id = e.student_id WHERE e.room_id = ?", (room_id,))
+        users = [dict(zip([column[0] for column in cursor.description], row)) for row in cursor.fetchall()]
+        
+        # Get questions
+        cursor.execute("SELECT question_id, question_title, max_points FROM ExamQuestions WHERE room_id = ? ORDER BY question_order", (room_id,))
+        questions = [dict(zip([column[0] for column in cursor.description], row)) for row in cursor.fetchall()]
+        
+        # Get max score per student per question
+        cursor.execute("""
+            SELECT t.student_id, t.question_id, MAX(t.sub_score) as max_score
+            FROM (
+                SELECT s.student_id, s.question_id, s.submission_id,
+                       COALESCE(SUM(tc.points), 0) as sub_score
+                FROM StudentSubmissions s
+                LEFT JOIN GradingResults gr ON s.submission_id = gr.submission_id AND gr.is_passed = 1
+                LEFT JOIN TestCases tc ON gr.test_case_id = tc.test_case_id
+                WHERE s.room_id = ?
+                GROUP BY s.student_id, s.question_id, s.submission_id
+            ) t
+            GROUP BY t.student_id, t.question_id
+        """, (room_id,))
+        scores = cursor.fetchall()
+        
+        score_map = {}
+        for row in scores:
+            student_id, question_id, max_score = row
+            if student_id not in score_map:
+                score_map[student_id] = {}
+            score_map[student_id][question_id] = max_score or 0
+            
+        result = []
+        for u in users:
+            s_map = score_map.get(u["user_id"], {})
+            total = sum(s_map.values())
+            result.append({
+                "user": u,
+                "total_score": total,
+                "scores": s_map
+            })
+            
+        # Sort by total_score descending
+        result.sort(key=lambda x: x["total_score"], reverse=True)
+        return {"questions": questions, "scoreboard": result}
     finally:
         cursor.close()
         conn.close()

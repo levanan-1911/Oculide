@@ -9,6 +9,8 @@ import { Track } from 'livekit-client'
 import { livekitAPI } from '@/utils/api'
 import { Suspense } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import StudentCodeModal from '@/components/StudentCodeModal'
 
 function StudentVideo({ studentId, source = Track.Source.Camera }: { studentId: number, source?: Track.Source }) {
   const tracks = useTracks([{ source, withPlaceholder: false }])
@@ -45,29 +47,96 @@ interface StudentStatus {
   progress: number
 }
 
+function ScoreboardView({ data }: { data: any }) {
+  if (!data) return <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>Đang tải bảng điểm...</div>;
+  
+  return (
+    <div style={{ background: '#111', borderRadius: 12, overflow: 'hidden', border: '1px solid #333' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+        <thead>
+          <tr style={{ background: '#1a1a1a', borderBottom: '2px solid #333' }}>
+            <th style={{ padding: '12px 16px', textAlign: 'center', width: 60, color: '#aaa' }}>Hạng</th>
+            <th style={{ padding: '12px 16px', textAlign: 'left', color: '#aaa' }}>Tên truy cập</th>
+            <th style={{ padding: '12px 16px', textAlign: 'center', color: '#aaa' }}>Tổng Điểm</th>
+            {data.questions.map((q: any, i: number) => (
+              <th key={q.question_id} style={{ padding: '12px 16px', textAlign: 'center', color: '#aaa' }}>
+                <div style={{ fontSize: 16, fontWeight: 'bold', color: '#fff' }}>Bài {i + 1}</div>
+                <div style={{ fontSize: 11, fontWeight: 'normal' }}>{q.max_points}đ</div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {data.scoreboard.map((row: any, i: number) => (
+            <tr key={row.user.user_id} style={{ borderBottom: '1px solid #222', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)' }}>
+              <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 'bold', color: i < 3 ? ['#ffd700', '#c0c0c0', '#cd7f32'][i] : '#888' }}>{i + 1}</td>
+              <td style={{ padding: '12px 16px', fontWeight: 'bold', color: '#67e8f9' }}>{row.user.full_name} <span style={{ fontSize: 12, color: '#666', fontWeight: 'normal' }}>({row.user.username})</span></td>
+              <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 'bold', fontSize: 16, color: '#fff' }}>{row.total_score}</td>
+              {data.questions.map((q: any) => {
+                const s = row.scores[q.question_id];
+                const isFull = s >= q.max_points;
+                const isZero = s === 0;
+                const isAttempted = s !== undefined;
+                return (
+                  <td key={q.question_id} style={{ 
+                    padding: '12px 16px', textAlign: 'center', fontWeight: 'bold',
+                    background: !isAttempted ? 'transparent' : isFull ? 'rgba(16,185,129,0.1)' : isZero ? 'rgba(239,68,68,0.05)' : 'rgba(245,158,11,0.1)',
+                    color: !isAttempted ? '#555' : isFull ? '#10b981' : isZero ? '#ef4444' : '#f59e0b',
+                    borderLeft: '1px solid #222'
+                  }}>
+                    {isAttempted ? s : '-'}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function ProctorDashboardContent() {
   const searchParams = useSearchParams()
   const roomIdParam = searchParams.get('room')
+  const viewParam = searchParams.get('view') as 'grid' | 'list' | 'scoreboard' | null;
   const ROOM_ID = roomIdParam ? parseInt(roomIdParam) : 1
 
-  const [view, setView] = useState<'grid' | 'list'>('grid')
+  const [view, setView] = useState<'grid' | 'list' | 'scoreboard'>(viewParam || 'grid')
   const [selected, setSelected] = useState<number | null>(null)
+  const [viewingStudent, setViewingStudent] = useState<{id: number, name: string} | null>(null)
   const [sidebar, setSidebar] = useState<'violations' | 'chat'>('violations')
   
   const [students, setStudents] = useState<StudentStatus[]>([])
   const [violations, setViolations] = useState<any[]>([])
   const [livekitToken, setLivekitToken] = useState('')
   const [totalQuestions, setTotalQuestions] = useState(1)
+  const [maxScore, setMaxScore] = useState(10)
+  const [scoreboardData, setScoreboardData] = useState<any>(null)
   
   const user = useAuthStore(state => state.user)
+  const isHydrated = useAuthStore(state => state.isHydrated)
   const wsRef = useRef<WebSocket | null>(null)
   const studentsRef = useRef<StudentStatus[]>([])
+
+  const router = useRouter()
 
   useEffect(() => {
     studentsRef.current = students
   }, [students])
 
   useEffect(() => {
+    if (!isHydrated) return
+    if (!user) {
+      router.push('/login')
+      return
+    }
+    if (user.role !== 'instructor' && user.role !== 'admin') {
+      alert("Bạn không có quyền truy cập trang này!")
+      router.push('/')
+      return
+    }
+
     const fetchDashboard = async () => {
       try {
         const [res, qRes] = await Promise.all([
@@ -76,6 +145,7 @@ function ProctorDashboardContent() {
         ])
         if (qRes.data) {
           setTotalQuestions(Math.max(1, qRes.data.length))
+          setMaxScore(qRes.data.reduce((a: any, b: any) => a + (b.max_points || 0), 0) || 10)
         }
         const fetchedStudents = res.data.map((item: any) => ({
           id: item.id,
@@ -91,8 +161,24 @@ function ProctorDashboardContent() {
         console.error("Lỗi lấy dữ liệu dashboard:", err)
       }
     }
+    
+    // Initial fetch
     fetchDashboard()
-  }, [ROOM_ID])
+    
+    // Poll data every 5 seconds
+    const interval = setInterval(fetchDashboard, 5000)
+    return () => clearInterval(interval)
+  }, [isHydrated, user, ROOM_ID, router])
+
+  useEffect(() => {
+    if (view === 'scoreboard') {
+      roomsAPI.getScoreboard(ROOM_ID).then(res => setScoreboardData(res.data)).catch(console.error)
+      const interval = setInterval(() => {
+        roomsAPI.getScoreboard(ROOM_ID).then(res => setScoreboardData(res.data)).catch(console.error)
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [view, ROOM_ID])
 
   useEffect(() => {
     if (!user || typeof window === 'undefined') return
@@ -106,8 +192,17 @@ function ProctorDashboardContent() {
   useEffect(() => {
     if (!user || typeof window === 'undefined') return
 
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'
-    const ws = new WebSocket(`${wsUrl}/ws/${ROOM_ID}/${user.user_id}`)
+        const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'
+    const ws = new WebSocket(`${wsUrl}/ws/${ROOM_ID}/proctor_${user.user_id}`)
+
+    let pingTimer: NodeJS.Timeout;
+    ws.onopen = () => {
+      pingTimer = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 30000);
+    };
 
     ws.onmessage = (event) => {
       try {
@@ -163,7 +258,10 @@ function ProctorDashboardContent() {
 
     wsRef.current = ws
 
-    return () => ws.close()
+        return () => {
+      if (pingTimer) clearInterval(pingTimer);
+      ws.close();
+    }
   }, [user])
 
   const activeCount   = students.filter(s => s.status === 'active' || s.status === 'violation').length
@@ -193,6 +291,19 @@ function ProctorDashboardContent() {
             backdropFilter: 'blur(10px)', boxShadow: '0 4px 30px rgba(0,0,0,0.5)'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Link href="/instructor" style={{
+                display: 'flex', alignItems: 'center', gap: 7,
+                color: 'rgba(255,255,255,0.4)', fontSize: 12, textDecoration: 'none',
+                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                padding: '6px 12px', borderRadius: 8, fontWeight: 600, transition: 'all 0.2s'
+              }}
+                onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.color = '#fff'; (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(255,255,255,0.1)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.color = 'rgba(255,255,255,0.4)'; (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(255,255,255,0.05)'; }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                Dashboard
+              </Link>
+              <div style={{ width: 1, height: 24, background: 'rgba(255,255,255,0.1)' }} />
               <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg, #06b6d4, #3b82f6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
               </div>
@@ -201,6 +312,7 @@ function ProctorDashboardContent() {
                 <span style={{ fontSize: 11, color: '#06b6d4', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em' }}>AI Surveillance Active</span>
               </div>
             </div>
+
 
             <div style={{ flex: 1 }} />
 
@@ -219,7 +331,7 @@ function ProctorDashboardContent() {
 
             {/* View toggle */}
             <div style={{ display: 'flex', background: 'rgba(0,0,0,0.5)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.1)', overflow: 'hidden', marginLeft: 16 }}>
-              {(['grid', 'list'] as const).map(v => (
+              {(['grid', 'list', 'scoreboard'] as const).map(v => (
                 <button
                   key={v}
                   onClick={() => setView(v)}
@@ -227,12 +339,11 @@ function ProctorDashboardContent() {
                     padding: '8px 12px', border: 'none', cursor: 'pointer', background: view === v ? 'rgba(6,182,212,0.2)' : 'transparent',
                     color: view === v ? '#67e8f9' : 'var(--text-muted)', transition: 'all 0.2s',
                   }}
+                  title={v === 'scoreboard' ? 'Bảng điểm' : v === 'list' ? 'Danh sách' : 'Lưới camera'}
                 >
-                  {v === 'grid' ? (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect></svg>
-                  ) : (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
-                  )}
+                  {v === 'grid' && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect></svg>}
+                  {v === 'list' && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>}
+                  {v === 'scoreboard' && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 20V10M12 20V4M6 20v-4"/></svg>}
                 </button>
               ))}
             </div>
@@ -254,7 +365,7 @@ function ProctorDashboardContent() {
                   { label: 'TỔNG SINH VIÊN', value: students.length, color: '#a5b4fc', bg: 'rgba(165,180,252,0.1)' },
                   { label: 'ĐANG LÀM BÀI', value: activeCount, color: '#34d399', bg: 'rgba(52,211,153,0.1)' },
                   { label: 'CẢNH BÁO AI', value: violationCount, color: '#f87171', bg: 'rgba(248,113,113,0.15)', glow: violationCount > 0 },
-                  { label: 'ĐIỂM TRUNG BÌNH', value: `${avgScore}/10`, color: '#fbbf24', bg: 'rgba(251,191,36,0.1)' },
+                  { label: 'ĐIỂM TRUNG BÌNH', value: `${avgScore}/${maxScore}`, color: '#fbbf24', bg: 'rgba(251,191,36,0.1)' },
                 ].map((s, i) => (
                   <div key={i} style={{ 
                     background: 'rgba(15,15,42,0.8)', padding: '20px 24px', borderRadius: 16, 
@@ -270,7 +381,9 @@ function ProctorDashboardContent() {
               </div>
 
               {/* View Toggle Content */}
-              {view === 'grid' ? (
+              {view === 'scoreboard' ? (
+                <ScoreboardView data={scoreboardData} />
+              ) : view === 'grid' ? (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 20 }}>
                   {students.map(s => {
                     const status = statusConfig[s.status];
@@ -281,6 +394,7 @@ function ProctorDashboardContent() {
                         key={s.id}
                         onClick={() => setSelected(selected === s.id ? null : s.id)}
                         style={{
+                          gridColumn: selected === s.id ? '1 / -1' : 'auto',
                           background: 'rgba(10,10,26,0.9)', borderRadius: 16, overflow: 'hidden', cursor: 'pointer',
                           border: `1px solid ${selected === s.id ? '#06b6d4' : isViolating ? 'rgba(239,68,68,0.5)' : 'rgba(255,255,255,0.05)'}`,
                           boxShadow: selected === s.id ? '0 0 20px rgba(6,182,212,0.3)' : isViolating ? '0 0 15px rgba(239,68,68,0.2)' : 'none',
@@ -288,7 +402,7 @@ function ProctorDashboardContent() {
                         }}
                       >
                         {/* Camera Frame */}
-                        <div style={{ height: 180, position: 'relative', background: '#000' }}>
+                        <div style={{ height: selected === s.id ? 600 : 180, position: 'relative', background: '#000' }}>
                           {selected === s.id ? (
                             <StudentVideo studentId={s.id} source={Track.Source.ScreenShare} />
                           ) : (
@@ -380,7 +494,7 @@ function ProctorDashboardContent() {
                             </td>
                             <td style={{ padding: '16px 24px' }}>
                               <div style={{ display: 'flex', gap: 8 }}>
-                                <button className="btn-secondary" style={{ padding: '6px 12px', fontSize: 11, borderRadius: 6 }}>View</button>
+                                <button className="btn-secondary" onClick={() => setViewingStudent({ id: s.id, name: s.name })} style={{ padding: '6px 12px', fontSize: 11, borderRadius: 6 }}>View Code</button>
                                 <button className="btn-secondary" onClick={() => { if(confirm(`Đuổi ${s.name}?`)) wsRef.current?.send(JSON.stringify({ type: 'kick_student', student_id: s.id })); }} style={{ padding: '6px 12px', fontSize: 11, borderRadius: 6, color: '#fca5a5', borderColor: 'rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)' }}>Kick</button>
                               </div>
                             </td>
@@ -472,6 +586,15 @@ function ProctorDashboardContent() {
           <div style={{ width: 40, height: 40, border: '3px solid rgba(6,182,212,0.2)', borderTopColor: '#06b6d4', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
           <span style={{ color: '#67e8f9', fontSize: 12, fontWeight: 700, letterSpacing: '0.1em' }}>INITIALIZING SURVEILLANCE...</span>
         </div>
+      )}
+
+      {viewingStudent && (
+        <StudentCodeModal
+          studentId={viewingStudent.id}
+          studentName={viewingStudent.name}
+          roomId={ROOM_ID}
+          onClose={() => setViewingStudent(null)}
+        />
       )}
     </div>
   )

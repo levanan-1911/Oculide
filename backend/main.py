@@ -28,19 +28,12 @@ async def lifespan(app: FastAPI):
                 if message["type"] == "message":
                     try:
                         data = json.loads(message["data"])
+                        print(f"📥 [REDIS] Received message: {data}")
                         room_id = data.get("room_id")
                         if room_id:
+                            room_id = int(room_id) # Ensure int
                             if data.get("type") == "proctoring_violation":
-                                student_id = data.get("student_id")
-                                from database.room_db import get_room_by_id
-                                room = await asyncio.to_thread(get_room_by_id, room_id)
-                                instructor_id = room["instructor_id"] if room else None
-                                
-                                msg_str = json.dumps(data)
-                                if instructor_id:
-                                    await manager.send_personal_message(msg_str, room_id, instructor_id)
-                                if student_id and student_id != instructor_id:
-                                    await manager.send_personal_message(msg_str, room_id, student_id)
+                                await manager.broadcast_json(room_id, data)
                             else:
                                 await manager.broadcast_json(room_id, data)
                     except json.JSONDecodeError:

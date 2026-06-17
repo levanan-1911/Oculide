@@ -1,23 +1,68 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { authAPI } from '@/utils/api'
+import { useAuthStore } from '@/store/useStore'
 
 export default function RegisterPage() {
   const router = useRouter()
   const [role, setRole] = useState<'student' | 'instructor'>('student')
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState('')
+  
+  const [fullName, setFullName] = useState('')
+  const [emailOrId, setEmailOrId] = useState('')
+  const [password, setPassword] = useState('')
 
-  const handleRegister = (e: React.FormEvent) => {
+  const user = useAuthStore((state) => state.user)
+  const isHydrated = useAuthStore((state) => state.isHydrated)
+
+  useEffect(() => {
+    if (isHydrated && user) {
+      if (user.role === 'instructor' || user.role === 'admin') {
+        router.push('/instructor')
+      } else {
+        router.push('/exam')
+      }
+    }
+  }, [isHydrated, user, router])
+
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
-    // Simulate API call
-    setTimeout(() => {
+    setError('')
+    
+    try {
+      const isStudent = role === 'student';
+      const username = isStudent ? emailOrId : emailOrId.split('@')[0];
+      const email = isStudent ? `${emailOrId}@student.oculide.edu.vn` : emailOrId;
+      
+      await authAPI.register({
+        username: username,
+        password: password,
+        email: email,
+        full_name: fullName,
+        role: role,
+        student_id: isStudent ? emailOrId : undefined
+      });
+      
+      router.push('/login?msg=Đăng_ký_thành_công')
+    } catch (err: any) {
+      console.error(err)
+      const detail = err.response?.data?.detail;
+      if (Array.isArray(detail)) {
+        // Pydantic validation error is an array of objects
+        setError(detail.map(d => `${d.loc[d.loc.length - 1]}: ${d.msg}`).join(', '));
+      } else if (typeof detail === 'string') {
+        setError(detail);
+      } else {
+        setError('Đăng ký thất bại. Vui lòng kiểm tra lại thông tin.');
+      }
+    } finally {
       setIsLoading(false)
-      // For now, route back to login after successful mock registration
-      router.push('/login')
-    }, 1500)
+    }
   }
 
   return (
@@ -60,6 +105,17 @@ export default function RegisterPage() {
 
       {/* ── RIGHT SIDE: FORM ── */}
       <div className="flex-1 flex items-center justify-center p-6 sm:p-12 relative z-10">
+        {/* BACK BUTTON */}
+        <Link href="/login" style={{
+          position: 'fixed', top: 20, left: 24, display: 'flex', alignItems: 'center', gap: 8,
+          color: 'rgba(255,255,255,0.45)', fontSize: 13, textDecoration: 'none',
+          background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+          padding: '8px 14px', borderRadius: 10, fontWeight: 600, zIndex: 50,
+          transition: 'all 0.2s', backdropFilter: 'blur(10px)'
+        }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          Đăng nhập
+        </Link>
         <div 
           className="glass-card w-full max-w-md animate-fade-in-up animate-delay-100 relative overflow-hidden" 
           style={{ padding: '48px 40px', background: 'rgba(10,10,26,0.6)', backdropFilter: 'blur(40px)' }}
@@ -95,12 +151,18 @@ export default function RegisterPage() {
               </button>
             </div>
 
+            {error && (
+              <div style={{ padding: '10px 12px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: 8, color: '#ef4444', fontSize: 13, marginBottom: 8 }}>
+                {error}
+              </div>
+            )}
+            
             {/* Input Fields */}
             <div className="space-y-4 mt-2">
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 ml-1">Họ và tên</label>
                 <div className="relative">
-                  <input type="text" required className="input-field pl-10" placeholder="Nguyễn Văn A" />
+                  <input type="text" required className="input-field pl-10" placeholder="Nguyễn Văn A" value={fullName} onChange={e => setFullName(e.target.value)} />
                   <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle>
                   </svg>
@@ -112,7 +174,7 @@ export default function RegisterPage() {
                   {role === 'student' ? 'Mã số sinh viên' : 'Email giảng viên'}
                 </label>
                 <div className="relative">
-                  <input type={role === 'student' ? 'text' : 'email'} required className="input-field pl-10" placeholder={role === 'student' ? 'VD: 20123456' : 'email@university.edu.vn'} />
+                  <input type={role === 'student' ? 'text' : 'email'} required className="input-field pl-10" placeholder={role === 'student' ? 'VD: 20123456' : 'email@university.edu.vn'} value={emailOrId} onChange={e => setEmailOrId(e.target.value)} />
                   <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     {role === 'student' ? (
                       <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
@@ -128,7 +190,7 @@ export default function RegisterPage() {
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 ml-1">Mật khẩu</label>
                 <div className="relative">
-                  <input type="password" required className="input-field pl-10" placeholder="••••••••" />
+                  <input type="password" required className="input-field pl-10" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
                   <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                   </svg>
@@ -162,7 +224,7 @@ export default function RegisterPage() {
             <div className="flex gap-3">
               <button 
                 type="button" 
-                onClick={() => window.location.href = 'http://localhost:8000/api/auth/login/google'}
+                onClick={() => window.location.href = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/auth/login/google`}
                 className="flex-1 flex items-center justify-center gap-2 h-[42px] rounded-xl text-sm font-semibold text-slate-300 bg-[rgba(255,255,255,0.03)] border border-[var(--border-subtle)] hover:bg-[rgba(255,255,255,0.08)] transition-all"
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -175,7 +237,7 @@ export default function RegisterPage() {
               </button>
               <button 
                 type="button" 
-                onClick={() => window.location.href = 'http://localhost:8000/api/auth/login/github'}
+                onClick={() => window.location.href = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/auth/login/github`}
                 className="flex-1 flex items-center justify-center gap-2 h-[42px] rounded-xl text-sm font-semibold text-slate-300 bg-[rgba(255,255,255,0.03)] border border-[var(--border-subtle)] hover:bg-[rgba(255,255,255,0.08)] hover:text-white transition-all"
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">

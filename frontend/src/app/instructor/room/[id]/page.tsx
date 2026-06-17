@@ -16,6 +16,7 @@ export default function RoomEditorPage() {
   const params = useParams()
   const router = useRouter()
   const user = useAuthStore(state => state.user)
+  const isHydrated = useAuthStore(state => state.isHydrated)
   
   const roomId = Number(params.id)
   
@@ -36,9 +37,18 @@ export default function RoomEditorPage() {
   ])
 
   useEffect(() => {
-    if (!user) return
+    if (!isHydrated) return
+    if (!user) {
+      router.push('/login')
+      return
+    }
+    if (user.role !== 'instructor' && user.role !== 'admin') {
+      alert("Bạn không có quyền truy cập trang này!")
+      router.push('/')
+      return
+    }
     fetchRoomData()
-  }, [user, roomId])
+  }, [isHydrated, user, roomId, router])
 
   const fetchRoomData = async () => {
     try {
@@ -284,7 +294,7 @@ export default function RoomEditorPage() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
                   <div>
                     <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: 8 }}>Điểm Tối Đa</label>
-                    <input type="number" required min="1" className="input-field" value={maxPoints} onChange={e => {
+                    <input type="number" required min="1" step="any" className="input-field" value={maxPoints} onChange={e => {
                       const newMax = Number(e.target.value)
                       setMaxPoints(newMax)
                       setTestCases(distributePoints(testCases, newMax))
@@ -342,7 +352,7 @@ export default function RoomEditorPage() {
                           </label>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>Điểm:</span>
-                            <input type="number" className="input-field" style={{ width: 80, padding: '6px 12px', fontSize: 14, fontWeight: 700, color: '#34d399', textAlign: 'right', background: 'rgba(0,0,0,0.5)' }} value={tc.points} onChange={e => handleTestCaseChange(idx, 'points', Number(e.target.value))} required step="0.01" />
+                            <input type="number" className="input-field" style={{ width: 80, padding: '6px 12px', fontSize: 14, fontWeight: 700, color: '#34d399', textAlign: 'right', background: 'rgba(0,0,0,0.5)' }} value={tc.points} onChange={e => handleTestCaseChange(idx, 'points', Number(e.target.value))} required step="any" />
                           </div>
                         </div>
                       </div>

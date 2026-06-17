@@ -18,11 +18,20 @@ services:
     networks:
       - exam-network
     healthcheck:
-      test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd",
-             "-S", "localhost", "-U", "sa",
-             "-P", "${MSSQL_SA_PASSWORD:-YourStrong@Passw0rd}",
-             "-No",   # trust server cert (new flag in mssql-tools18)
-             "-Q", "SELECT 1"]
+      test:
+        [
+          "CMD",
+          "/opt/mssql-tools18/bin/sqlcmd",
+          "-S",
+          "localhost",
+          "-U",
+          "sa",
+          "-P",
+          "${MSSQL_SA_PASSWORD:-YourStrong@Passw0rd}",
+          "-No", # trust server cert (new flag in mssql-tools18)
+          "-Q",
+          "SELECT 1"
+        ]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -39,7 +48,7 @@ services:
     networks:
       - exam-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -48,7 +57,7 @@ services:
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile          # Lean image: no ML deps
+      dockerfile: Dockerfile # Lean image: no ML deps
     container_name: exam-backend
     ports:
       - "8000:8000"
@@ -59,23 +68,21 @@ services:
       DATABASE_PASSWORD: "${MSSQL_SA_PASSWORD:-YourStrong@Passw0rd}"
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      LIVEKIT_URL: http://livekit:7880
-      LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:-devkey}"
-      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:-secret}"
+      LIVEKIT_URL: wss://oculide-exam-4eu7af2s.livekit.cloud
+      LIVEKIT_API_KEY: APIYsZcXomYALVS
+      LIVEKIT_API_SECRET: H1lgQ7E9lv8f7G5g7DaaAD70Svg4qn7JvEPmFWjXcqV
       JWT_SECRET_KEY: "${JWT_SECRET_KEY:-change-me-in-production}"
     depends_on:
       sqlserver:
         condition: service_healthy
       redis:
         condition: service_healthy
-      livekit:
-        condition: service_started
     volumes:
       - ./backend:/app
     networks:
       - exam-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -85,7 +92,7 @@ services:
   celery-grading:
     build:
       context: ./backend
-      dockerfile: Dockerfile          # Lean image (no ML) — grading uses Docker SDK
+      dockerfile: Dockerfile # Lean image (no ML) — grading uses Docker SDK
     container_name: exam-celery-grading
     command: celery -A celery_app worker -Q grading --loglevel=info --concurrency=4
     environment:
@@ -117,7 +124,7 @@ services:
   celery-proctoring:
     build:
       context: ./backend
-      dockerfile: Dockerfile.celery   # Heavy image: torch + ultralytics + mediapipe
+      dockerfile: Dockerfile.celery # Heavy image: torch + ultralytics + mediapipe
     container_name: exam-celery-proctoring
     command: celery -A celery_app worker -Q proctoring --loglevel=info --concurrency=2
     environment:
@@ -140,39 +147,27 @@ services:
     networks:
       - exam-network
 
-  # ─── LiveKit SFU ─────────────────────────────────────────────────────────────
-  livekit:
-    image: livekit/livekit-server:latest
-    container_name: exam-livekit
-    command: --dev
-    ports:
-      - "7880:7880"
-      - "7881:7881"
-      - "7882:7882/udp"
-    environment:
-      # Format: "key: secret" — space after colon is REQUIRED by LiveKit
-      LIVEKIT_KEYS: "devkey: secret"
-    networks:
-      - exam-network
-
-  # ─── Frontend ─────────────────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: https://api.oculide.id.vn
+        NEXT_PUBLIC_WS_URL: wss://api.oculide.id.vn
+        NEXT_PUBLIC_LIVEKIT_URL: wss://oculide-exam-4eu7af2s.livekit.cloud
     container_name: exam-frontend
     ports:
-      - "3000:3000"
+      - "3001:3000" # Đổi sang 3001 để không xung đột với npm run dev (port 3000)
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-      NEXT_PUBLIC_WS_URL: ws://localhost:8000
+      NEXT_PUBLIC_API_URL: https://api.oculide.id.vn
+      NEXT_PUBLIC_WS_URL: wss://api.oculide.id.vn
     depends_on:
       backend:
         condition: service_healthy
     networks:
       - exam-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -182,9 +177,10 @@ services:
 volumes:
   sqlserver_data:
   redis_data:
-  yolo_weights:      # persistent cache for YOLO model weights
+  yolo_weights:
+    # persistent cache for YOLO model weights
 
-# ─── Networks ─────────────────────────────────────────────────────────────────
+    # ─── Networks ─────────────────────────────────────────────────────────────────
 networks:
   exam-network:
     driver: bridge
